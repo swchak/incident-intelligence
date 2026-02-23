@@ -6,7 +6,6 @@ An intelligent incident analysis system that automatically analyzes metrics and 
 
 Incident Intelligence accelerates incident resolution by leveraging data analysis and machine learning to identify potential root causes. When an incident is detected, the system analyzes relevant metrics and logs to provide engineers with actionable insights and prioritized root cause suggestions.
 
-
 ## Features
 
 - **Automatic Incident Analysis**: Analyzes metrics and logs in real-time when incidents are detected
