@@ -18,7 +18,8 @@ Incident Intelligence accelerates incident resolution by leveraging data analysi
 ### Prerequisites
 
 - Python 3.8+
-- [Additional dependencies to be added]
+- pip package manager
+- Virtual environment (recommended)
 
 ### Installation
 
@@ -27,34 +28,40 @@ Incident Intelligence accelerates incident resolution by leveraging data analysi
 git clone https://github.com/yourusername/incident-intelligence.git
 cd incident-intelligence
 
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### Usage
+### Quick Start
 
-[Usage instructions to be added]
+```bash
+# Generate simulated incident data
+python data/generate.py
+
+# Validate the dataset
+python data/validation.py
+
+# Run the analysis engine
+python main.py
+```
 
 ## Data Generation
 
-Since real datasets are not available for this project, we generate simulated data using the `generate.py` script. This allows us to create realistic incident scenarios and test the analysis engine.
-
-To generate simulated data:
+The project uses simulated data to test the analysis engine without requiring proprietary datasets.
 
 ```bash
-source venv/bin/activate
 python data/generate.py
 ```
 
-The script will create synthetic metrics and logs that simulate real incident patterns for testing and development. The generated data is saved to `incident_root_cause_data.csv`, which contains incident scenarios with associated metrics and root causes for training and evaluation.
+This creates `incident_root_cause_data.csv` with synthetic incident scenarios, metrics (CPU usage, error rate, request rate), and root causes based on common production failure patterns.
 
-The incident data is synthetically generated based on common production failure patterns with injected noise and partial overlap to reflect real-world ambiguity and imperfect labeling. This approach ensures the model learns to handle the complexity and uncertainty inherent in actual incident diagnosis scenarios.
+## Data Validation
 
-### Data Validation
-
-The `validation.py` script validates and analyzes the generated dataset to ensure data quality and integrity. It performs statistical analysis on the incident data by computing mean values of key metrics (CPU usage, error rate, request rate) grouped by root cause labels. This helps verify that the simulated data exhibits realistic patterns and correlations between metrics and their associated root causes.
-
-To run validation:
+Verify dataset quality and patterns:
 
 ```bash
 python data/validation.py
@@ -62,8 +69,8 @@ python data/validation.py
 
 ## Contributing
 
-[Contributing guidelines to be added]
+Contributions are welcome! Please submit pull requests or open issues for bugs and feature requests.
 
 ## License
 
-[License information to be added]
+MIT License - see LICENSE file for details
