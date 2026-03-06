@@ -208,4 +208,15 @@ __marimo__/
 
 
 # Ignore data folder where generated data files are stored
-data/*.csv
+
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+models/
+artifacts/*
+data/*
+notebooks/explainability_outputs/
+*/*/*/generate_data_backup.py
