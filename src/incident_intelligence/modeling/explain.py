@@ -348,3 +348,31 @@ def explain_models(
     print(f"Wrote summary: {summary_path}")
 
     return summary
+
+
+def load_df(path: str | Path) -> pd.DataFrame:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {path}")
+    if path.suffix.lower() == ".csv":
+        return pd.read_csv(path)
+    if path.suffix.lower() in (".parquet", ".pq"):
+        return pd.read_parquet(path)
+    raise ValueError(f"Unsupported file type: {path.suffix} (use .csv or .parquet)")
+
+def run_explainability(
+    *,
+    data_path: str | Path,
+    cfg: ExplainConfig,
+    model_path: str | Path | None = None,
+    models_dir: str | Path = "artifacts/models",
+) -> Dict[str, Any]:
+
+    df_eval = pd.read_csv(data_path) if str(data_path).endswith(".csv") else pd.read_parquet(data_path)
+
+    if model_path:
+        models = [Path(model_path)]
+    else:
+        models = find_models(models_dir)
+
+    return explain_models(models, df_eval, cfg)

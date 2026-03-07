@@ -1,76 +1,192 @@
 # Incident Intelligence
 
-An intelligent incident analysis system that automatically analyzes metrics and logs to suggest the most likely root causes to engineers when incidents occur.
+A comprehensive incident analysis and intelligence system that processes incident data, trains predictive models, and generates reports.
 
-## Overview
+## Table of Contents
 
-Incident Intelligence accelerates incident resolution by leveraging data analysis and machine learning to identify potential root causes. When an incident is detected, the system analyzes relevant metrics and logs to provide engineers with actionable insights and prioritized root cause suggestions.
+- [Folder Structure](#folder-structure)
+- [Notebook Guide](#notebook-guide)
+- [Source Code Organization](#source-code-organization)
+- [Getting Started](#getting-started)
+- [Running Scripts and Pipelines](#running-scripts-and-pipelines)
+- [Requirements](#requirements)
 
-## Features
+## Folder Structure
 
-- **Automatic Incident Analysis**: Analyzes metrics and logs in real-time when incidents are detected
-- **Root Cause Suggestions**: Provides prioritized list of likely root causes based on data patterns
-- **Fast Resolution**: Helps engineers quickly identify the source of problems
-- **Data-Driven Insights**: Uses comprehensive metrics and log analysis for accurate suggestions
+```
+incident-intelligence/
+├── artifacts/              # Generated model artifacts and outputs
+├── config/                 # Configuration files
+│   └── class_config.json   # Class configuration settings
+├── data/                   # Data directory
+│   ├── processed/          # Cleaned and processed datasets
+│   ├── raw/                # Raw input data
+│   └── incident_root_cause_data.csv  # Main incident dataset
+├── models/                 # Trained model files
+├── notebooks/              # Jupyter notebooks for analysis and development
+│   ├── explainability_outputs/  # Generated explainability visualizations
+│   ├── 01_data_generation.ipynb
+│   ├── 02_eda.ipynb
+│   ├── 03_baseline_model.ipynb
+│   └── 04_model_explainability.ipynb
+├── reports/                # Generated reports and visualizations
+├── scripts/                # Executable Python scripts
+│   ├── __pycache__/        # Python cache directory
+│   ├── evaluate.py         # Model evaluation script
+│   ├── generate_dataset.py # Dataset generation script
+│   ├── Makefile            # Build and task automation
+│   ├── run_pipeline.py     # Main pipeline orchestration
+│   └── train.py            # Model training script
+├── src/                    # Source code modules
+│   └── incident_intelligence/
+│       ├── api/            # API endpoints and handlers
+│       ├── data/           # Data loading and processing utilities
+│       ├── modeling/       # Model architecture and training logic
+│       ├── __init__.py     # Package initialization
+│       ├── settings.py     # Application settings and configuration
+│       └── venv/           # Virtual environment (if present)
+├── .gitignore              # Git ignore rules
+├── pyproject.toml          # Project metadata and dependencies
+├── README.md               # This file
+└── requirements.txt        # Python package dependencies
+```
+
+## Notebook Guide
+
+All analysis and exploratory notebooks are located in the `notebooks/` directory:
+
+| Notebook                        | Purpose                                                                                |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| `01_data_generation.ipynb`      | Generate and prepare the incident dataset from raw sources                             |
+| `02_eda.ipynb`                  | Exploratory Data Analysis - understand data distributions, patterns, and relationships |
+| `03_baseline_model.ipynb`       | Build and evaluate baseline machine learning models                                    |
+| `04_model_explainability.ipynb` | Analyze model interpretability and feature importance using SHAP/LIME                  |
+
+**Subdirectories:**
+
+- `explainability_outputs/` - Generated explainability visualizations and reports
+
+**To view notebooks:**
+
+```bash
+jupyter notebook notebooks/
+```
+
+**Recommended workflow:**
+
+1. Start with `01_data_generation.ipynb` to prepare data
+2. Run `02_eda.ipynb` to explore data characteristics
+3. Execute `03_baseline_model.ipynb` to train initial models
+4. Review `04_model_explainability.ipynb` to understand model decisions
+
+## Source Code Organization
+
+### `src/incident_intelligence/`
+
+The main source code is organized into the following modules:
+
+- **`api/`** - REST API endpoints and request handlers
+- **`data/`** - Data loading, processing, and feature engineering functions
+- **`modeling/`** - Machine learning models, training logic, and evaluation utilities
+- **`settings.py`** - Configuration management and environment variables
+- **`__init__.py`** - Package initialization
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.8+
-- pip package manager
-- Virtual environment (recommended)
+- pip or conda package manager
 
 ### Installation
 
+1. Navigate to the project directory
+
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/incident-intelligence.git
-cd incident-intelligence
+cd /Users/swethachakravarthy/Projects/incident-intelligence
+```
 
-# Create and activate virtual environment
-python -m venv venv
+2. Create a virtual environment
+
+```bash
+python3 -m venv venv
 source venv/bin/activate
+```
 
-# Install dependencies
+3. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Quick Start
+## Running Scripts and Pipelines
+
+### 1. Generate Dataset
+
+Prepare and generate the dataset:
 
 ```bash
-# Generate simulated incident data
-python data/generate.py
-
-# Validate the dataset
-python data/validation.py
-
-# Run the analysis engine
-python main.py
+python scripts/generate_dataset.py
 ```
 
-## Data Generation
+### 2. Train Models
 
-The project uses simulated data to test the analysis engine without requiring proprietary datasets.
+Train the machine learning models:
 
 ```bash
-python data/generate.py
+python scripts/train.py
 ```
 
-This creates `incident_root_cause_data.csv` with synthetic incident scenarios, metrics (CPU usage, error rate, request rate), and root causes based on common production failure patterns.
+### 3. Run Full Pipeline
 
-## Data Validation
-
-Verify dataset quality and patterns:
+Execute the complete pipeline (data processing, training, evaluation):
 
 ```bash
-python data/validation.py
+python scripts/run_pipeline.py
 ```
 
-## Contributing
+### 4. Evaluate Models
 
-Contributions are welcome! Please submit pull requests or open issues for bugs and feature requests.
+Evaluate trained models on test data:
 
-## License
+```bash
+python scripts/evaluate.py
+```
 
-MIT License - see LICENSE file for details
+### Using Makefile
+
+If a Makefile exists, you can use:
+
+```bash
+make help           # View available commands
+make train          # Run training
+make evaluate       # Run evaluation
+```
+
+## Configuration
+
+Configuration is managed through:
+
+- **`config/class_config.json`** - Class and model configuration
+- **`src/incident_intelligence/settings.py`** - Application settings
+
+Update these files before running pipelines to customize behavior.
+
+## Output Locations
+
+- **Models**: `models/`
+- **Processed Data**: `data/processed/`
+- **Artifacts**: `artifacts/`
+- **Explainability Outputs**: `notebooks/explainability_outputs/`
+
+## Dependencies
+
+All required packages are listed in `requirements.txt`. Install them with:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+_Last updated: March 6, 2026_

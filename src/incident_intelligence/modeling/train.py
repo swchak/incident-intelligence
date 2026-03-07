@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,32 +189,13 @@ def train_and_validate(
 
     return payload
 
-
-def main() -> None:
-    p = argparse.ArgumentParser(description="Train baseline models on train set and evaluate on validation set.")
-    p.add_argument("--train", type=str, required=True, help="Train CSV/Parquet")
-    p.add_argument("--val", type=str, required=True, help="Validation CSV/Parquet")
-    p.add_argument("--label-col", type=str, default="root_cause_label")
-
-    p.add_argument("--models-out-dir", type=str, default="artifacts/models")
-    p.add_argument("--metrics-out-json", type=str, default="artifacts/metrics/train_val_results.json")
-    p.add_argument("--leaderboard-out-csv", type=str, default="artifacts/metrics/leaderboard_val.csv")
-    p.add_argument("--best-model-out", type=str, default="artifacts/models/best_model.joblib")
-    args = p.parse_args()
-
-    cfg = TrainValidateConfig(
-        label_col=args.label_col,
-        models_out_dir=args.models_out_dir,
-        metrics_out_json=args.metrics_out_json,
-        leaderboard_out_csv=args.leaderboard_out_csv,
-        best_model_out=args.best_model_out,
-    )
-
-    train_df = load_df(args.train)
-    val_df = load_df(args.val)
-
-    train_and_validate(train_df, val_df, cfg=cfg)
-
-
-if __name__ == "__main__":
-    main()
+def run_training(
+    train_path: str | Path,
+    val_path: str | Path,
+    *,
+    cfg: TrainValidateConfig,
+    base_cfg: Optional[BaselineTrainConfig] = None,
+) -> Dict[str, Any]:
+    train_df = load_df(train_path)
+    val_df = load_df(val_path)
+    return train_and_validate(train_df, val_df, cfg=cfg, base_cfg=base_cfg)

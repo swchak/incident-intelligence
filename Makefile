@@ -96,4 +96,4 @@ pipeline: generate train evaluate explain
 
 clean:
 	rm -rf artifacts
-	@echo "Removed artifacts/"
+	@echo "Removed artifacts/"	

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -146,44 +145,18 @@ def evaluate_models(
 
     return results
 
+def run_evaluation(
+    *,
+    data_path: str | Path,
+    cfg: EvalConfig,
+    model_path: str | Path | None = None,
+    models_dir: str | Path = "artifacts/models",
+) -> Dict[str, Any]:
+    df_eval = load_df(data_path)
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate saved model pipelines on an evaluation dataset.")
-    parser.add_argument("--data", type=str, required=True, help="Eval dataset (CSV/Parquet) including label column.")
-    parser.add_argument("--label-col", type=str, default="root_cause_label")
-    parser.add_argument("--models-dir", type=str, default="artifacts/models", help="Directory of .joblib pipelines.")
-    parser.add_argument("--model", type=str, default=None, help="Evaluate a single model .joblib (overrides --models-dir).")
-    parser.add_argument("--metrics-out", type=str, default="artifacts/metrics/evaluation.json")
-    parser.add_argument("--summary-csv-out", type=str, default="artifacts/metrics/evaluation_summary.csv")
-    args = parser.parse_args()
-
-    df_eval = load_df(args.data)
-    cfg = EvalConfig(
-        label_col=args.label_col,
-        metrics_out=args.metrics_out,
-        summary_csv_out=args.summary_csv_out,
-    )
-
-    if args.model:
-        model_paths = [Path(args.model)]
+    if model_path:
+        model_paths = [Path(model_path)]
     else:
-        model_paths = find_model_files(args.models_dir)
+        model_paths = find_model_files(models_dir)
 
-    results = evaluate_models(model_paths, df_eval, cfg)
-
-    # Print best model by accuracy
-    best = None
-    for m in results["models"]:
-        acc = m["metrics"].get("accuracy", -1)
-        if best is None or acc > best["metrics"].get("accuracy", -1):
-            best = m
-    if best:
-        print(f"Evaluated {len(results['models'])} model(s).")
-        print(f"Best by accuracy: {best['model_name']} ({best['metrics']['accuracy']:.4f})")
-        print(f"Metrics saved to: {cfg.metrics_out}")
-        if cfg.summary_csv_out:
-            print(f"Summary saved to: {cfg.summary_csv_out}")
-
-
-if __name__ == "__main__":
-    main()
+    return evaluate_models(model_paths, df_eval, cfg)

@@ -14,3 +14,10 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.scripts]
+incident-generate = "incident_intelligence.cli.generator:main"
+incident-train = "incident_intelligence.cli.train:main"
+incident-eval = "incident_intelligence.cli.evaluate:main"
+incident-explain = "incident_intelligence.cli.explain:main"
+incident-pipeline = "incident_intelligence.cli.pipeline:main"
