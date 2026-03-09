@@ -1,31 +1,27 @@
-import argparse
-import pandas as pd
-
-from incident_intelligence.modeling.explain import ExplainConfig, explain_models, find_models
+from incident_intelligence.modeling.explain import ExplainConfig, run_explainability
 
 
-def main():
-    p = argparse.ArgumentParser(description="Generate explainability artifacts for saved models.")
-    p.add_argument("--data", type=str, required=True, help="Eval dataset CSV/Parquet including label column.")
-    p.add_argument("--label-col", type=str, default="root_cause_label")
-    p.add_argument("--models-dir", type=str, default="artifacts/models")
-    p.add_argument("--out-dir", type=str, default="artifacts/explain")
-
-    p.add_argument("--background-n", type=int, default=100)
-    p.add_argument("--explain-n", type=int, default=200)
-    args = p.parse_args()
-
-    df = pd.read_csv(args.data) if args.data.endswith(".csv") else pd.read_parquet(args.data)
-
+def main() -> None:
     cfg = ExplainConfig(
-        label_col=args.label_col,
-        out_dir=args.out_dir,
-        background_n=args.background_n,
-        explain_n=args.explain_n,
+        label_col="root_cause_label",
+        out_dir="artifacts/explain",
+        background_n=100,
+        explain_n=200,
+        kernel_bg=40,
+        kernel_nsamples=80,
+        perm_repeats=10,
+        random_state=42,
+        top_k=20,
     )
 
-    models = find_models(args.models_dir)
-    explain_models(models, df, cfg)
+    results = run_explainability(
+        data_path="data/processed/incident_root_cause_eval.csv",
+        cfg=cfg,
+        models_dir="artifacts/models",
+    )
+
+    print(f"Generated explainability for {len(results['models'])} model(s).")
+    print(f"Artifacts saved to: {cfg.out_dir}")
 
 
 if __name__ == "__main__":
