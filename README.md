@@ -4,11 +4,11 @@ Incident Intelligence is a machine learning pipeline for **incident root cause c
 
 The project demonstrates a complete ML workflow:
 
-• Synthetic incident data generation  
-• Exploratory data analysis  
-• Baseline model training  
-• Model evaluation  
-• Model explainability
+- Synthetic incident data generation
+- Exploratory data analysis (EDA)
+- Baseline model training
+- Model evaluation
+- Model explainability
 
 The goal is to automatically classify the **underlying cause of production incidents** from operational metrics.
 
@@ -46,27 +46,110 @@ Features include:
 | oom_log_count | Out-of-memory events |
 | timeout_log_count | Timeout events |
 
-Target variable: root_cause_label
+Target variable: `root_cause_label`
 
-list of classes:
+Classes:
 
-bad_deployment
-external_dependency_failure
-traffic_spike
-memory_leak
-cpu_saturation
-normal
+- `bad_deployment`
+- `external_dependency_failure`
+- `traffic_spike`
+- `memory_leak`
+- `cpu_saturation`
+- `normal`
 
 ---
 
 ## Quickstart
 
-Run the full pipeline:
+### 1) Create and activate a virtual environment (macOS / Linux)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 2) Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Recommended: Run via CLI (C)
+
+The project defines CLI entry points in `pyproject.toml` under `[project.scripts]`.
+
+### 1) Install the package (editable)
+
+From the project root:
+
+```bash
+pip install -e .
+```
+
+### 2) Run the pipeline
+
+Run step-by-step:
+
+```bash
+incident-generate
+incident-train
+incident-eval
+incident-explain
+```
+
+Or run end-to-end:
+
+```bash
+incident-pipeline
+```
+
+> Note: If the CLI commands are not available, ensure you ran `pip install -e .` successfully.
+> The CLI entry points expect modules under `incident_intelligence.cli.*`. If you prefer not to use the CLI, use one of the alternatives below.
+
+---
+
+## Alternative 1: Makefile (A)
+
+A Makefile is provided at the repo root.
+
+### Run end-to-end
+
+```bash
+make help
+make pipeline
+```
+
+### Run individual steps
+
+```bash
+make generate
+make train
+make evaluate
+make explain
+```
+
+---
+
+## Alternative 2: Run scripts directly (B)
+
+From the project root:
+
+### Run step-by-step
 
 ```bash
 python scripts/generate_dataset.py
 python scripts/train.py
 python scripts/evaluate.py
+python scripts/explain.py
+```
+
+### Run end-to-end
+
+```bash
+python scripts/run_pipeline.py
+```
 
 ---
 
@@ -92,8 +175,8 @@ incident-intelligence/
 │   ├── generate_dataset.py         # Build dataset artifacts
 │   ├── train.py                    # Train model(s)
 │   ├── evaluate.py                 # Evaluate model(s)
-│   ├── run_pipeline.py             # End-to-end pipeline runner
-│   └── Makefile                    # Optional command shortcuts
+│   ├── explain.py                  # Explainability artifacts (e.g., SHAP)
+│   └── run_pipeline.py             # End-to-end pipeline runner
 ├── src/incident_intelligence/
 │   ├── api/                        # API-related code
 │   ├── data/                       # Data processing utilities
@@ -125,77 +208,6 @@ Recommended order: **01 → 02 → 03 → 04**
 
 ---
 
-## Source Code Organization
-
-Inside `src/incident_intelligence`:
-
-- `data/`: data ingestion, preprocessing, and feature utilities
-- `modeling/`: training, inference, and evaluation logic
-- `api/`: API-layer code (if serving predictions)
-- `settings.py`: shared constants/config loading
-
----
-
-## Setup
-
-### 1) Create and activate virtual environment (macOS)
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2) Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Running Scripts
-
-From project root:
-
-### Generate dataset
-
-```bash
-python scripts/generate_dataset.py
-```
-
-### Train model
-
-```bash
-python scripts/train.py
-```
-
-### Evaluate model
-
-```bash
-python scripts/evaluate.py
-```
-
-### Run end-to-end pipeline
-
-```bash
-python scripts/run_pipeline.py
-```
-
----
-
-## Makefile (Optional)
-
-If `scripts/Makefile` contains targets, run from the `scripts` folder:
-
-```bash
-cd scripts
-make help
-make train
-make evaluate
-```
-
----
-
 ## Inputs and Outputs
 
 ### Inputs
@@ -217,4 +229,4 @@ make evaluate
 
 - Keep large datasets and model binaries out of git unless required.
 - Update `config/class_config.json` and `src/incident_intelligence/settings.py` before running custom experiments.
-- Prefer script execution for reproducibility; use notebooks for analysis and diagnostics.
+- Prefer CLI / scripts / Makefile for reproducibility; use notebooks for analysis and diagnostics.
