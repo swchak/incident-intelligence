@@ -76,7 +76,7 @@ pip install -r requirements.txt
 
 ---
 
-## Recommended: Run via CLI (C)
+## Recommended: Run via CLI (A)
 
 The project defines CLI entry points in `pyproject.toml` under `[project.scripts]`.
 
@@ -90,7 +90,7 @@ pip install -e .
 
 ### 2) Run the pipeline
 
-Run step-by-step:
+#### Run step-by-step (recommended sequence)
 
 ```bash
 incident-generate
@@ -99,7 +99,16 @@ incident-eval
 incident-explain
 ```
 
-Or run end-to-end:
+#### Run an individual step (one-off)
+
+```bash
+incident-generate   # dataset only
+incident-train      # train only
+incident-eval       # evaluate only
+incident-explain    # explainability only
+```
+
+#### Run end-to-end (single command)
 
 ```bash
 incident-pipeline
@@ -110,7 +119,7 @@ incident-pipeline
 
 ---
 
-## Alternative 1: Makefile (A)
+## Alternative 1: Makefile (B)
 
 A Makefile is provided at the repo root.
 
@@ -121,7 +130,7 @@ make help
 make pipeline
 ```
 
-### Run individual steps
+### Run step-by-step (recommended sequence)
 
 ```bash
 make generate
@@ -130,13 +139,31 @@ make evaluate
 make explain
 ```
 
+### Run an individual step (one-off)
+
+```bash
+make generate
+# or
+make train
+# or
+make evaluate
+# or
+make explain
+```
+
 ---
 
-## Alternative 2: Run scripts directly (B)
+## Alternative 2: Run scripts directly (C)
 
 From the project root:
 
-### Run step-by-step
+### Run end-to-end
+
+```bash
+python scripts/run_pipeline.py
+```
+
+### Run step-by-step (recommended sequence)
 
 ```bash
 python scripts/generate_dataset.py
@@ -145,10 +172,16 @@ python scripts/evaluate.py
 python scripts/explain.py
 ```
 
-### Run end-to-end
+### Run an individual step (one-off)
 
 ```bash
-python scripts/run_pipeline.py
+python scripts/generate_dataset.py
+# or
+python scripts/train.py
+# or
+python scripts/evaluate.py
+# or
+python scripts/explain.py
 ```
 
 ---
