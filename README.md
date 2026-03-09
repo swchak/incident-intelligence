@@ -174,7 +174,7 @@ python scripts/explain.py
 
 ### Run an individual step (one-off)
 
-````bash
+```bash
 python scripts/generate_dataset.py
 # or
 python scripts/train.py
@@ -219,7 +219,7 @@ incident-intelligence/
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
-````
+```
 
 ---
 
