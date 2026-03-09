@@ -34,17 +34,17 @@ The dataset contains simulated telemetry signals from a distributed service.
 
 Features include:
 
-| Feature | Description |
-|------|------|
-| avg_cpu_usage | CPU utilization |
-| mem_growth | Memory growth rate |
-| request_rate | Incoming request rate |
-| latency | Request latency |
-| dependency_latency | Upstream service latency |
-| upstream_error_rate | Dependency error rate |
-| error_rate | Application error rate |
-| oom_log_count | Out-of-memory events |
-| timeout_log_count | Timeout events |
+| Feature             | Description              |
+| ------------------- | ------------------------ |
+| avg_cpu_usage       | CPU utilization          |
+| mem_growth          | Memory growth rate       |
+| request_rate        | Incoming request rate    |
+| latency             | Request latency          |
+| dependency_latency  | Upstream service latency |
+| upstream_error_rate | Dependency error rate    |
+| error_rate          | Application error rate   |
+| oom_log_count       | Out-of-memory events     |
+| timeout_log_count   | Timeout events           |
 
 Target variable: root_cause_label
 
@@ -63,7 +63,7 @@ normal
 
 Run the full pipeline:
 
-```bash
+````bash
 python scripts/generate_dataset.py
 python scripts/train.py
 python scripts/evaluate.py
@@ -103,7 +103,7 @@ incident-intelligence/
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md
-```
+````
 
 ---
 
@@ -210,6 +210,83 @@ make evaluate
 - `models/`
 - `artifacts/`
 - `notebooks/explainability_outputs/`
+
+---
+
+## Generated Outputs
+
+This section describes all artifacts generated during model training and evaluation. These files are created in the `artifacts/` directory when you run the training pipeline.
+
+### Directory Structure
+
+```
+artifacts/
+├── explain/          # Model explainability artifacts
+├── metrics/          # Performance metrics and evaluation results
+└── models/           # Trained model files
+```
+
+---
+
+### Explainability Artifacts (`artifacts/explain/`)
+
+Visual explanations and feature importance analysis for different models.
+
+#### Sample Output
+
+Below is an example of the global feature importance visualization generated for each model:
+
+![Global Feature Importance Example](docs/images/sample_global_importance.png)
+
+_Example: Global feature importance showing the top features ranked by their contribution to model predictions_
+
+The visualizations show:
+
+- **Feature Names**: Key variables in the dataset
+- **Importance Scores**: Quantitative measure of each feature's impact
+- **Ranked Display**: Features ordered from most to least important
+
+#### Generated Files
+
+| Model               | Global Importance Plot                               | CSV Data                                             |
+| ------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| Best Model          | `best_model_global_importance.png`                   | `best_model_global_importance.csv`                   |
+| Gradient Boosting   | `Gradient_Boosting_pipeline_global_importance.png`   | `Gradient_Boosting_pipeline_global_importance.csv`   |
+| Logistic Regression | `Logistic_Regression_pipeline_global_importance.png` | `Logistic_Regression_pipeline_global_importance.csv` |
+| Random Forest       | `Random_Forest_pipeline_global_importance.png`       | `Random_Forest_pipeline_global_importance.csv`       |
+| SVM (RBF)           | `SVM_(RBF)_pipeline_global_importance.png`           | `SVM_(RBF)_pipeline_global_importance.csv`           |
+
+**Additional Files:**
+
+- `explainability_summary.json` - Summary of explainability metrics across all models
+
+---
+
+### Model Performance Metrics (`artifacts/metrics/`)
+
+Performance evaluation files generated during training:
+
+| File                     | Description                                    |
+| ------------------------ | ---------------------------------------------- |
+| `baseline_metrics.json`  | Baseline model performance metrics             |
+| `evaluation_summary.csv` | Summary of all model evaluations               |
+| `evaluation.json`        | Detailed evaluation metrics in JSON format     |
+| `leaderboard_val.csv`    | Validation leaderboard comparing all models    |
+| `train_val_results.json` | Training and validation results for all models |
+
+---
+
+### Trained Models (`artifacts/models/`)
+
+All trained models saved in joblib format for easy deployment:
+
+- `best_model.joblib` - Best performing model from AutoML
+- `Gradient_Boosting_pipeline.joblib` - Gradient Boosting classifier pipeline
+- `Logistic_Regression_pipeline.joblib` - Logistic Regression classifier pipeline
+- `Random_Forest_pipeline.joblib` - Random Forest classifier pipeline
+- `SVM_(RBF)_pipeline.joblib` - Support Vector Machine with RBF kernel pipeline
+
+**Note:** Model artifacts are not checked into version control due to file size. Run the training pipeline to generate them locally.
 
 ---
 
