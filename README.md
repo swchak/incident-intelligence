@@ -48,10 +48,10 @@ The goal is to automatically identify the **underlying cause of production incid
 
 The project follows a modular ML pipeline architecture:
 
-- **Config layer** – experiment and dataset configuration (`config/`)
-- **Core ML logic** – reusable modules (`src/incident_intelligence/`)
-- **Pipeline scripts** – CLI entrypoints for dataset generation, training, and evaluation (`scripts/`)
-- **Artifacts** – generated models, metrics, and explainability outputs (`artifacts/`)
+- **Config layer** – experiment and dataset configuration ([config/](config/))
+- **Core ML logic** – reusable modules ([src/incident_intelligence/](src/incident_intelligence/))
+- **Pipeline scripts** – CLI entrypoints for dataset generation, training, and evaluation ([scripts/](scripts/))
+- **Artifacts** – generated models, metrics, and explainability outputs ([artifacts/](artifacts/))
 
 This separation allows the pipeline to be executed via CLI, automated workflows, or orchestration systems.
 
@@ -112,14 +112,14 @@ The generation process:
 
 Dataset generation is controlled by:
 
-- Simulation logic in `src/incident_intelligence/data/`
-- Generation parameters defined in `config/class_config.json`
+- Simulation logic in [`src/incident_intelligence/data/`](src/incident_intelligence/data/)
+- Generation parameters defined in [`config/class_config.json`](config/class_config.json)
 
 ### Output Dataset
 
 The generated dataset is saved to:
 
-- **File**: `data/raw/incidents_raw.csv`
+- **File**: [`data/raw/incidents_raw.csv`](data/raw/incidents_raw.csv)
 - **Format**: CSV (UTF-8 encoded)
 - **Granularity**: One row per synthetic incident snapshot
 - **Privacy**: Contains **no production data or PII**
@@ -158,7 +158,7 @@ The modeling workflow includes:
 
 The final selected model is saved as:
 
-`artifacts/models/best_model.joblib`
+[`artifacts/models/best_model.joblib`](artifacts/models/best_model.joblib)
 
 The trained candidate models are then passed to the evaluation stage for comparison across validation and evaluation datasets.
 
@@ -178,19 +178,26 @@ The evaluation stage measures model performance using several standard classific
 - Precision
 - Recall
 - F1 Score
-- Confusion Matrix
 - ROC-AUC (if applicable)
+
+### Example Confusion Matrix
+
+Below is an example confusion matrix for the best-performing model on the evaluation dataset.
+
+<img src="docs/images/confusion_matrix.png" width="500" alt="Confusion Matrix">
+
+_Figure: Confusion matrix illustrating classification performance across incident root-cause categories._
 
 Evaluation results are used to compare candidate models and select the best performing one.
 
 Generated evaluation artifacts include:
 
-- validation leaderboard (`leaderboard_val.csv`)
-- evaluation summary metrics (`evaluation_summary.csv`)
-- detailed evaluation report (`evaluation.json`)
+- validation leaderboard ([`leaderboard_val.csv`](artifacts/metrics/leaderboard_val.csv))
+- evaluation summary metrics ([`evaluation_summary.csv`](artifacts/metrics/evaluation_summary.csv))
+- detailed evaluation report ([`evaluation.json`](artifacts/metrics/evaluation.json))
 - confusion matrix visualizations
 
-Once the best performing model is selected, explainability artifacts are generated to interpret model predictions.
+Once the best-performing model is selected, explainability artifacts are generated to interpret model predictions.
 
 ---
 
@@ -261,7 +268,9 @@ This command will:
 
 After completion you should see generated outputs in:
 
-```bash
+After completion you should see generated outputs in:
+
+```text
 artifacts/
 ├── models/
 ├── metrics/
@@ -293,10 +302,10 @@ incident-pipeline
 #### 3. Run individual stages
 
 ```bash
-incident-generate   # dataset only
-incident-train      # train only
-incident-eval       # evaluate only
-incident-explain    # explainability only
+incident-generate
+incident-train
+incident-eval
+incident-explain
 ```
 
 > Note: If the CLI commands are not available, ensure you ran `pip install -e .` successfully.
@@ -330,10 +339,10 @@ python scripts/run_pipeline.py
 #### 2. Run individual steps
 
 ```bash
-python scripts/generate_dataset.py
-python scripts/train.py
-python scripts/evaluate.py
-python scripts/explain.py
+python [scripts/generate_dataset.py](scripts/generate_dataset.py)
+python [scripts/train.py](scripts/train.py)
+python [scripts/evaluate.py](scripts/evaluate.py)
+python [scripts/explain.py](scripts/explain.py)
 ```
 
 ---
@@ -391,15 +400,39 @@ Each model is trained using a standardized preprocessing pipeline and assessed o
 
 The best-performing model is automatically selected and saved as:
 
-`artifacts/models/best_model.joblib`
+[`artifacts/models/best_model.joblib`](artifacts/models/best_model.joblib)
 
 **Note:** All models are trained on the training dataset and assessed on validation and evaluation datasets to ensure fair comparison.
 
 ---
 
+## Model Performance
+
+The training pipeline evaluates several candidate models and compares their performance using validation and evaluation datasets.
+
+Example validation leaderboard (results will vary depending on generated data):
+
+| Model               | Accuracy | Precision | Recall   | F1 Score |
+| ------------------- | -------- | --------- | -------- | -------- |
+| Logistic Regression | 0.82     | 0.81      | 0.80     | 0.80     |
+| Random Forest       | 0.88     | 0.87      | 0.86     | 0.86     |
+| Gradient Boosting   | **0.90** | **0.89**  | **0.89** | **0.89** |
+| SVM (RBF)           | 0.87     | 0.86      | 0.85     | 0.85     |
+
+The best-performing model is automatically selected and saved as:
+
+[`artifacts/models/best_model.joblib`](artifacts/models/best_model.joblib)
+
+Full evaluation results are available in:
+
+- [`artifacts/metrics/leaderboard_val.csv`](artifacts/metrics/leaderboard_val.csv)
+- [`artifacts/metrics/evaluation_summary.csv`](artifacts/metrics/evaluation_summary.csv)
+
+---
+
 ## Generated Outputs
 
-This section describes all artifacts generated during model training and evaluation. These files are created in the `artifacts/` directory when you run the training pipeline.
+This section describes all artifacts generated during model training and evaluation. These files are created in the [`artifacts/`](artifacts/) directory when you run the training pipeline.
 
 ### Directory Structure
 
@@ -519,13 +552,19 @@ avg_cpu_usage,mem_growth,oom_log_count,request_rate,error_rate,latency,upstream_
 
 ## Notebooks
 
-- **01_data_generation.ipynb** Creates/validates the working dataset from source inputs.
+The following notebooks provide exploratory analysis and model experimentation.
 
-- **02_eda.ipynb** Performs exploratory data analysis (distributions, missing values, trends, correlations).
+- **[01_data_generation.ipynb](notebooks/01_data_generation.ipynb)**  
+  Creates and validates the working dataset from source inputs.
 
-- **03_baseline_model.ipynb** Trains baseline models and compares initial performance.
+- **[02_eda.ipynb](notebooks/02_eda.ipynb)**  
+  Performs exploratory data analysis (distributions, missing values, trends, correlations).
 
-- **04_model_explainability.ipynb** Produces explainability outputs (feature importance and model interpretation artifacts).
+- **[03_baseline_model.ipynb](notebooks/03_baseline_model.ipynb)**  
+  Trains baseline models and compares initial performance.
+
+- **[04_model_explainability.ipynb](notebooks/04_model_explainability.ipynb)**  
+  Produces explainability outputs such as feature importance and model interpretation artifacts.
 
 Recommended order: **01 → 02 → 03 → 04**
 
@@ -543,7 +582,7 @@ Recommended order: **01 → 02 → 03 → 04**
 ## Development Notes
 
 - Keep large datasets and model binaries out of git unless required.
-- Update `config/class_config.json` and `src/incident_intelligence/settings.py` before running custom experiments.
+- Update [`config/class_config.json`](config/class_config.json) and [`src/incident_intelligence/settings.py`](src/incident_intelligence/settings.py) before running custom experiments.
 - Prefer CLI / scripts / Makefile for reproducibility; use notebooks for analysis and diagnostics.
 
 ---
