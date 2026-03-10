@@ -63,7 +63,7 @@ def generate_incident(root_cause, class_config):
         "latency": np.random.normal(200, 50),
         "avg_cpu": np.random.normal(40, 10),
     }
-
+    print(class_config)
     config = class_config[root_cause]
 
     for metric, mixture in config.items():

@@ -360,23 +360,6 @@ def load_df(path: str | Path) -> pd.DataFrame:
         return pd.read_parquet(path)
     raise ValueError(f"Unsupported file type: {path.suffix} (use .csv or .parquet)")
 
-# def run_explainability(
-#     *,
-#     data_path: str | Path,
-#     cfg: ExplainConfig,
-#     model_path: str | Path | None = None,
-#     models_dir: str | Path = "artifacts/models",
-# ) -> Dict[str, Any]:
-
-#     df_eval = pd.read_csv(data_path) if str(data_path).endswith(".csv") else pd.read_parquet(data_path)
-
-#     if model_path:
-#         models = [Path(model_path)]
-#     else:
-#         models = find_models(models_dir)
-
-#     return explain_models(models, df_eval, cfg)
-
 def run_explainability(
     *,
     data_path: str | Path,
@@ -392,3 +375,569 @@ def run_explainability(
         models = find_models(models_dir)
 
     return explain_models(models, df_eval, cfg)
+
+
+def build_local_explainer_for_model(
+    model: Pipeline,
+    X_bg_raw: pd.DataFrame,
+    cfg: ExplainConfig,
+) -> Tuple[Any, str, Any]:
+    """
+    Returns (explainer, kind, clf) for local explanations.
+    Uses a reduced background for kernel explainers.
+    """
+    clf, transformer = get_estimator_and_transformer(model)
+    X_bg = transform_X(transformer, X_bg_raw)
+
+    classes = list(getattr(clf, "classes_", []))
+
+    # Force kernel for multiclass GradientBoosting
+    if isinstance(clf, GradientBoostingClassifier) and len(classes) > 2:
+        if not _HAS_SHAP:
+            raise RuntimeError("SHAP is required for local explainability")
+        X_bg_small = shap.sample(X_bg, min(cfg.kernel_bg, len(X_bg)))
+        explainer = shap.KernelExplainer(clf.predict_proba, X_bg_small.to_numpy())
+        return explainer, "kernel", clf
+
+    explainer, kind = make_explainer(clf, X_bg)
+
+    if explainer is None:
+        raise ValueError(f"Local explanation unsupported for model type: {type(clf)}")
+
+    if kind == "kernel":
+        X_bg_small = shap.sample(X_bg, min(cfg.kernel_bg, len(X_bg)))
+        explainer = shap.KernelExplainer(clf.predict_proba, X_bg_small.to_numpy())
+
+    return explainer, kind, clf
+
+
+def get_shap_list_for_one(
+    explainer: Any,
+    kind: str,
+    x_one_df: pd.DataFrame,
+    n_classes: int,
+    cfg: ExplainConfig,
+) -> List[np.ndarray]:
+    """
+    Returns list[class] -> (1, n_features) for one example.
+    """
+    if kind == "kernel":
+        shap_one = explainer.shap_values(
+            x_one_df.to_numpy(),
+            nsamples=cfg.kernel_nsamples,
+        )
+    else:
+        shap_one = explainer.shap_values(x_one_df)
+
+    return _normalize_multiclass_shap(shap_one, n_classes=n_classes)
+
+
+def _get_base_value(explainer: Any, class_index: int) -> float | None:
+    """
+    Robust base value extraction for multiclass explainers.
+    """
+    base = getattr(explainer, "expected_value", None)
+    if base is None:
+        return None
+
+    if isinstance(base, (list, np.ndarray)):
+        base = np.asarray(base).reshape(-1)
+        if len(base) > class_index:
+            return float(base[class_index])
+        return float(base[0])
+
+    return float(base)
+
+
+def local_waterfall_for_pred_class(
+    explainer: Any,
+    kind: str,
+    clf: Any,
+    x_one_df: pd.DataFrame,
+    cfg: ExplainConfig,
+    out_path: str | Path | None = None,
+) -> Dict[str, Any]:
+    """
+    Builds a SHAP waterfall for the predicted class of one row.
+    Optionally saves the figure.
+    """
+    if not _HAS_SHAP:
+        raise RuntimeError("SHAP is required for local waterfall plots")
+
+    classes = list(clf.classes_)
+    pred = clf.predict(x_one_df)[0]
+    class_index = classes.index(pred)
+
+    shap_list = get_shap_list_for_one(
+        explainer=explainer,
+        kind=kind,
+        x_one_df=x_one_df,
+        n_classes=len(classes),
+        cfg=cfg,
+    )
+    sv = shap_list[class_index][0]
+    base = _get_base_value(explainer, class_index)
+
+    exp = shap.Explanation(
+        values=sv,
+        base_values=base,
+        data=x_one_df.iloc[0].values,
+        feature_names=list(x_one_df.columns),
+    )
+
+    import matplotlib.pyplot as plt
+
+    shap.plots.waterfall(exp, max_display=cfg.top_k, show=False)
+
+    if out_path is not None:
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(out_path, dpi=200, bbox_inches="tight")
+
+    plt.close()
+
+    return {
+        "predicted_class": pred,
+        "class_index": class_index,
+        "feature_contributions": pd.Series(
+            sv,
+            index=x_one_df.columns,
+        ).sort_values(key=np.abs, ascending=False).to_dict(),
+    }
+
+
+def topk_rca(
+    explainer: Any,
+    kind: str,
+    clf: Any,
+    x_one_df: pd.DataFrame,
+    cfg: ExplainConfig,
+    k: int = 3,
+    top_feats: int = 8,
+) -> List[Dict[str, Any]]:
+    """
+    Returns the top-k predicted classes and their most influential features.
+    """
+    classes = list(clf.classes_)
+    proba = clf.predict_proba(x_one_df)[0]
+    order = np.argsort(proba)[::-1][:k]
+
+    shap_list = get_shap_list_for_one(
+        explainer=explainer,
+        kind=kind,
+        x_one_df=x_one_df,
+        n_classes=len(classes),
+        cfg=cfg,
+    )
+
+    results: List[Dict[str, Any]] = []
+
+    for class_index in order:
+        class_name = classes[class_index]
+        prob = float(proba[class_index])
+
+        sv = shap_list[class_index][0]
+        s = (
+            pd.Series(sv, index=x_one_df.columns)
+            .sort_values(key=np.abs, ascending=False)
+            .head(top_feats)
+        )
+
+        results.append(
+            {
+                "class_name": class_name,
+                "probability": prob,
+                "top_features": [
+                    {"feature": feature, "shap_value": float(value)}
+                    for feature, value in s.items()
+                ],
+            }
+        )
+
+    return results
+
+
+def run_local_explainability(
+    *,
+    data_path: str | Path,
+    model_path: str | Path,
+    cfg: ExplainConfig,
+    row_indices: List[int] | None = None,
+    n_examples: int = 3,
+    top_k_classes: int = 3,
+    top_features_per_class: int = 8,
+) -> Dict[str, Any]:
+    """
+    Generates local explainability artifacts for one model on selected eval rows.
+    Saves waterfall plots and a JSON summary.
+    """
+    df_eval = load_df(data_path)
+    X, y = split_xy(df_eval, cfg.label_col)
+
+    model = load_pipeline(model_path)
+    model_name = Path(model_path).stem
+
+    X_bg_raw = X.sample(min(cfg.background_n, len(X)), random_state=cfg.random_state)
+    explainer, kind, clf = build_local_explainer_for_model(model, X_bg_raw, cfg)
+
+    if row_indices is None:
+        row_indices = list(
+            X.sample(min(n_examples, len(X)), random_state=cfg.random_state).index
+        )
+
+    out_dir = _ensure_dir(Path(cfg.out_dir) / model_name / "local")
+    local_results: List[Dict[str, Any]] = []
+
+    clf, transformer = get_estimator_and_transformer(model)
+
+    for idx in row_indices:
+        x_one_raw = X.loc[[idx]]
+        x_one = transform_X(transformer, x_one_raw)
+        true_label = y.loc[idx]
+        pred_label = clf.predict(x_one)[0]
+
+        waterfall_path = out_dir / f"row_{idx}_waterfall.png"
+        waterfall = local_waterfall_for_pred_class(
+            explainer=explainer,
+            kind=kind,
+            clf=clf,
+            x_one_df=x_one,
+            cfg=cfg,
+            out_path=waterfall_path,
+        )
+
+        rca = topk_rca(
+            explainer=explainer,
+            kind=kind,
+            clf=clf,
+            x_one_df=x_one,
+            cfg=cfg,
+            k=top_k_classes,
+            top_feats=top_features_per_class,
+        )
+
+        local_results.append(
+            {
+                "row_index": int(idx),
+                "true_label": true_label,
+                "predicted_label": pred_label,
+                "waterfall_png": str(waterfall_path),
+                "waterfall": waterfall,
+                "topk_rca": rca,
+            }
+        )
+
+    summary = {
+        "model_name": model_name,
+        "model_path": str(model_path),
+        "method": kind,
+        "rows": local_results,
+    }
+
+    written_reports = write_local_html_reports(summary)
+    summary["html_reports"] = [str(p) for p in written_reports]
+    
+    written_reports = write_local_markdown_reports(summary)
+    summary["markdown_reports"] = [str(p) for p in written_reports]
+
+    summary_path = out_dir / "local_explainability_summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2))
+
+    return summary
+
+
+def write_local_markdown_reports(
+    summary: Dict[str, Any],
+) -> List[Path]:
+    """
+    Writes one markdown RCA report per explained row plus an index report.
+    Expects the output from run_local_explainability(...).
+    """
+    model_name = summary["model_name"]
+    rows = summary["rows"]
+
+    if not rows:
+        return []
+
+    first_waterfall = Path(rows[0]["waterfall_png"])
+    out_dir = first_waterfall.parent
+
+    written: List[Path] = []
+
+    # One report per row
+    for row in rows:
+        row_index = row["row_index"]
+        report_path = out_dir / f"row_{row_index}_report.md"
+
+        waterfall_name = Path(row["waterfall_png"]).name
+
+        lines: List[str] = [
+            f"# Local RCA Report: row {row_index}",
+            "",
+            f"- Model: `{model_name}`",
+            f"- True label: `{row['true_label']}`",
+            f"- Predicted label: `{row['predicted_label']}`",
+            "",
+            "## Predicted Class Waterfall",
+            "",
+            f"![Waterfall]({waterfall_name})",
+            "",
+            "## Top Candidate Root Causes",
+            "",
+        ]
+
+        for i, candidate in enumerate(row["topk_rca"], start=1):
+            lines.extend(
+                [
+                    f"### {i}. {candidate['class_name']} ({candidate['probability']:.4f})",
+                    "",
+                    "| Feature | SHAP value |",
+                    "|---|---:|",
+                ]
+            )
+
+            for feat in candidate["top_features"]:
+                lines.append(f"| {feat['feature']} | {feat['shap_value']:.6f} |")
+
+            lines.append("")
+
+        report_path.write_text("\n".join(lines))
+        written.append(report_path)
+
+    # Index report
+    index_path = out_dir / "local_explainability_index.md"
+    index_lines: List[str] = [
+        f"# Local Explainability Index: {model_name}",
+        "",
+        f"- Method: `{summary['method']}`",
+        f"- Number of explained rows: `{len(rows)}`",
+        "",
+        "## Reports",
+        "",
+    ]
+
+    for row in rows:
+        row_index = row["row_index"]
+        index_lines.append(
+            f"- [row {row_index}](row_{row_index}_report.md) "
+            f"(true=`{row['true_label']}`, pred=`{row['predicted_label']}`)"
+        )
+
+    index_lines.append("")
+    index_path.write_text("\n".join(index_lines))
+    written.append(index_path)
+
+    return written
+
+from html import escape
+
+
+def write_local_html_reports(
+    summary: Dict[str, Any],
+) -> List[Path]:
+    """
+    Writes one HTML RCA report per explained row plus an index HTML page.
+    Expects the output from run_local_explainability(...).
+    """
+    model_name = summary["model_name"]
+    rows = summary["rows"]
+
+    if not rows:
+        return []
+
+    first_waterfall = Path(rows[0]["waterfall_png"])
+    out_dir = first_waterfall.parent
+
+    written: List[Path] = []
+
+    css = """
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        margin: 32px;
+        line-height: 1.5;
+        color: #222;
+        max-width: 1100px;
+    }
+    h1, h2, h3 {
+        color: #111;
+    }
+    .meta {
+        background: #f6f8fa;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 24px;
+    }
+    .card {
+        border: 1px solid #d0d7de;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+        background: #fff;
+    }
+    .pill {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #eef2ff;
+        border: 1px solid #c7d2fe;
+        margin-right: 8px;
+        font-size: 0.95em;
+    }
+    img {
+        max-width: 100%;
+        height: auto;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        background: #fff;
+        padding: 6px;
+    }
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 12px 0 24px 0;
+    }
+    th, td {
+        border: 1px solid #d0d7de;
+        padding: 8px 10px;
+        text-align: left;
+    }
+    th {
+        background: #f6f8fa;
+    }
+    .small {
+        color: #57606a;
+        font-size: 0.95em;
+    }
+    a {
+        color: #0969da;
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
+    """
+
+    # Per-row reports
+    for row in rows:
+        row_index = row["row_index"]
+        report_path = out_dir / f"row_{row_index}_report.html"
+        waterfall_name = Path(row["waterfall_png"]).name
+
+        candidates_html: List[str] = []
+
+        for i, candidate in enumerate(row["topk_rca"], start=1):
+            rows_html = "\n".join(
+                f"<tr><td>{escape(str(feat['feature']))}</td><td>{feat['shap_value']:.6f}</td></tr>"
+                for feat in candidate["top_features"]
+            )
+
+            candidates_html.append(
+                f"""
+                <div class="card">
+                    <h3>{i}. {escape(str(candidate['class_name']))}</h3>
+                    <p><span class="pill">Probability: {candidate['probability']:.4f}</span></p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Feature</th>
+                                <th>SHAP value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
+                        </tbody>
+                    </table>
+                </div>
+                """
+            )
+
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Local RCA Report: row {row_index}</title>
+            <style>{css}</style>
+        </head>
+        <body>
+            <h1>Local RCA Report: row {row_index}</h1>
+
+            <div class="meta">
+                <p><strong>Model:</strong> {escape(str(model_name))}</p>
+                <p><strong>True label:</strong> <span class="pill">{escape(str(row['true_label']))}</span></p>
+                <p><strong>Predicted label:</strong> <span class="pill">{escape(str(row['predicted_label']))}</span></p>
+            </div>
+
+            <h2>Predicted Class Waterfall</h2>
+            <p class="small">This plot shows the feature contributions driving the predicted class.</p>
+            <img src="{escape(waterfall_name)}" alt="Waterfall plot for row {row_index}">
+
+            <h2>Top Candidate Root Causes</h2>
+            <p class="small">These are the top predicted classes with their strongest contributing features.</p>
+
+            {''.join(candidates_html)}
+
+            <p><a href="local_explainability_index.html">Back to index</a></p>
+        </body>
+        </html>
+        """
+
+        report_path.write_text(html, encoding="utf-8")
+        written.append(report_path)
+
+    # Index page
+    links_html = "\n".join(
+        f"""
+        <tr>
+            <td>{row['row_index']}</td>
+            <td>{escape(str(row['true_label']))}</td>
+            <td>{escape(str(row['predicted_label']))}</td>
+            <td><a href="row_{row['row_index']}_report.html">Open report</a></td>
+        </tr>
+        """
+        for row in rows
+    )
+
+    index_path = out_dir / "local_explainability_index.html"
+    index_html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Local Explainability Index: {escape(str(model_name))}</title>
+        <style>{css}</style>
+    </head>
+    <body>
+        <h1>Local Explainability Index</h1>
+
+        <div class="meta">
+            <p><strong>Model:</strong> {escape(str(model_name))}</p>
+            <p><strong>Method:</strong> <span class="pill">{escape(str(summary['method']))}</span></p>
+            <p><strong>Explained rows:</strong> <span class="pill">{len(rows)}</span></p>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Row index</th>
+                    <th>True label</th>
+                    <th>Predicted label</th>
+                    <th>Report</th>
+                </tr>
+            </thead>
+            <tbody>
+                {links_html}
+            </tbody>
+        </table>
+    </body>
+    </html>
+    """
+
+    index_path.write_text(index_html, encoding="utf-8")
+    written.append(index_path)
+
+    return written

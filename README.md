@@ -18,7 +18,7 @@ The goal is to automatically identify the **underlying cause of production incid
 - Synthetic incident simulation engine for generating labeled telemetry data
 - Modular ML pipeline with CLI-based execution
 - Multiple classification models with automated comparison
-- Model explainability using global feature importance
+- Model explainability using global feature importance and **local incident analysis**
 - Fully reproducible dataset generation and training pipeline
 
 ---
@@ -31,6 +31,7 @@ The goal is to automatically identify the **underlying cause of production incid
 - [Modeling Pipeline](#modeling-pipeline)
 - [Model Evaluation](#model-evaluation)
 - [Model Explainability](#model-explainability)
+  - [Local Incident Root Cause Analysis](#local-incident-root-cause-analysis)
 - [Quickstart](#quickstart)
 - [Running the Pipeline](#running-the-pipeline)
 - [Project Structure](#project-structure)
@@ -158,7 +159,9 @@ The modeling workflow includes:
 
 The final selected model is saved as:
 
-[`artifacts/models/best_model.joblib`](artifacts/models/best_model.joblib)
+```text
+artifacts/models/best_model.joblib
+```
 
 The trained candidate models are then passed to the evaluation stage for comparison across validation and evaluation datasets.
 
@@ -192,9 +195,9 @@ Evaluation results are used to compare candidate models and select the best perf
 
 Generated evaluation artifacts include:
 
-- validation leaderboard ([`leaderboard_val.csv`](artifacts/metrics/leaderboard_val.csv))
-- evaluation summary metrics ([`evaluation_summary.csv`](artifacts/metrics/evaluation_summary.csv))
-- detailed evaluation report ([`evaluation.json`](artifacts/metrics/evaluation.json))
+- validation leaderboard (`artifacts/metrics/leaderboard_val.csv`)
+- evaluation summary metrics (`artifacts/metrics/evaluation_summary.csv`)
+- detailed evaluation report (`artifacts/metrics/evaluation.json`)
 - confusion matrix visualizations
 
 Once the best-performing model is selected, explainability artifacts are generated to interpret model predictions.
@@ -227,6 +230,82 @@ Example output:
 _Example: Global feature importance showing the relative impact of telemetry features on model predictions._
 
 Detailed explainability artifacts and exported files are described in the **Generated Outputs** section below.
+
+### Local Incident Root Cause Analysis
+
+In addition to global feature importance, the project supports **local explainability** to analyze individual incident predictions.
+
+Local explainability helps answer the question:
+
+> _Why did the model classify this specific incident as a particular root cause?_
+
+For selected incidents in the evaluation dataset, the pipeline generates:
+
+- SHAP waterfall plots for the predicted class
+- Top candidate root causes with prediction probabilities
+- Feature contributions driving each prediction
+- Human-readable HTML root cause analysis reports
+
+These reports simulate a real incident investigation workflow by showing which telemetry signals influenced the model's decision.
+
+#### Running Local Explainability
+
+Explain predictions for the best trained model:
+
+```bash
+incident-explain-local --model artifacts/models/best_model.joblib
+```
+
+Explain specific incidents:
+
+```bash
+incident-explain-local \
+  --model artifacts/models/best_model.joblib \
+  --row-indices 12 47 108
+```
+
+Explain a random subset of incidents:
+
+```bash
+incident-explain-local \
+  --model artifacts/models/best_model.joblib \
+  --n-examples 5
+```
+
+#### Generated Reports
+
+Local explainability artifacts are written to:
+
+```text
+artifacts/
+└── explain/
+    └── <model_name>/
+        └── local/
+```
+
+Example Output:
+
+```text
+row_12_waterfall.png
+row_12_report.html
+
+row_47_waterfall.png
+row_47_report.html
+
+row_108_waterfall.png
+row_108_report.html
+
+local_explainability_index.html
+local_explainability_summary.json
+```
+
+Open the following file in a browser:
+
+```text
+artifacts/explain/<model_name>/local/local_explainability_index.html
+```
+
+This page links to all generated incident investigation reports.
 
 ---
 
@@ -268,8 +347,6 @@ This command will:
 
 After completion you should see generated outputs in:
 
-After completion you should see generated outputs in:
-
 ```text
 artifacts/
 ├── models/
@@ -306,6 +383,7 @@ incident-generate
 incident-train
 incident-eval
 incident-explain
+incident-explain-local --model artifacts/models/best_model.joblib
 ```
 
 > Note: If the CLI commands are not available, ensure you ran `pip install -e .` successfully.
@@ -339,10 +417,10 @@ python scripts/run_pipeline.py
 #### 2. Run individual steps
 
 ```bash
-python [scripts/generate_dataset.py](scripts/generate_dataset.py)
-python [scripts/train.py](scripts/train.py)
-python [scripts/evaluate.py](scripts/evaluate.py)
-python [scripts/explain.py](scripts/explain.py)
+python scripts/generate_dataset.py
+python scripts/train.py
+python scripts/evaluate.py
+python scripts/explain.py
 ```
 
 ---
@@ -400,7 +478,7 @@ Each model is trained using a standardized preprocessing pipeline and assessed o
 
 The best-performing model is automatically selected and saved as:
 
-[`artifacts/models/best_model.joblib`](artifacts/models/best_model.joblib)
+`artifacts/models/best_model.joblib`
 
 **Note:** All models are trained on the training dataset and assessed on validation and evaluation datasets to ensure fair comparison.
 
@@ -421,16 +499,21 @@ Example validation leaderboard (results will vary depending on generated data):
 
 The best-performing model is automatically selected and saved as:
 
-[`artifacts/models/best_model.joblib`](artifacts/models/best_model.joblib)
+`artifacts/models/best_model.joblib`
 
 Full evaluation results are available in:
 
-- [`artifacts/metrics/leaderboard_val.csv`](artifacts/metrics/leaderboard_val.csv)
-- [`artifacts/metrics/evaluation_summary.csv`](artifacts/metrics/evaluation_summary.csv)
+- `artifacts/metrics/leaderboard_val.csv`
+- `artifacts/metrics/evaluation_summary.csv`
 
 ---
 
 ## Generated Outputs
+
+> ⚠️ **Note**
+>
+> Files inside the `artifacts/` directory are **generated outputs** produced by the pipeline.
+> They are **not checked into version control** and will appear only after running the pipeline locally.
 
 This section describes all artifacts generated during model training and evaluation. These files are created in the [`artifacts/`](artifacts/) directory when you run the training pipeline.
 
