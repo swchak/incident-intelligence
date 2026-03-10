@@ -13,6 +13,37 @@ The goal is to automatically identify the **underlying cause of production incid
 
 ---
 
+## Key Features
+
+- Synthetic incident simulation engine for generating labeled telemetry data
+- Modular ML pipeline with CLI-based execution
+- Multiple classification models with automated comparison
+- Model explainability using global feature importance
+- Fully reproducible dataset generation and training pipeline
+
+---
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [ML Pipeline](#ml-pipeline)
+- [Synthetic Dataset](#synthetic-dataset)
+- [Modeling Pipeline](#modeling-pipeline)
+- [Model Evaluation](#model-evaluation)
+- [Model Explainability](#model-explainability)
+- [Quickstart](#quickstart)
+- [Running the Pipeline](#running-the-pipeline)
+- [Project Structure](#project-structure)
+- [Models Evaluated](#models-evaluated)
+- [Generated Outputs](#generated-outputs)
+- [Feature Dictionary](#feature-dictionary)
+- [Notebooks](#notebooks)
+- [Reproducibility](#reproducibility)
+- [Development Notes](#development-notes)
+- [Future Improvements](#future-improvements)
+
+---
+
 ## Architecture Overview
 
 The project follows a modular ML pipeline architecture:
@@ -28,28 +59,56 @@ This separation allows the pipeline to be executed via CLI, automated workflows,
 
 ## ML Pipeline
 
-![Pipeline](docs/images/pipeline_diagram.png)
+The repository implements a full machine learning lifecycle for incident root cause classification, from synthetic data generation to model training, evaluation, and explainability.
 
-The repository implements a full ML lifecycle:
+<img src="docs/images/ML-pipeline-RCA.png" width="600" alt="ML Pipeline">
+
+_Figure: High-level machine learning pipeline for incident root cause classification._
+
+The ML pipeline consists of the following stages:
 
 1. Synthetic dataset generation
-2. Dataset splitting (train / validation / test)
+2. Dataset splitting (train / validation / evaluation)
 3. Model training with hyperparameter tuning
 4. Model evaluation
 5. Model explainability
 
 ---
 
-## Dataset
+## Synthetic Dataset
 
 This project uses a **synthetically generated** incident dataset for development, testing, and evaluation.
 
-The dataset is generated using a configurable simulation framework that models common production failure patterns such as
+The dataset is generated using a configurable simulation framework that models common production failure scenarios observed in real systems.
 
-- traffic spikes
-- memory leaks
-- CPU saturation,
-- Dependency failures.
+### Synthetic Incident Generation Pipeline
+
+<img src="docs/images/synthetic_incident_pipeline.png" width="600" alt="Synthetic Incident Generation Pipeline">
+
+_Figure: Synthetic incident generation pipeline used to simulate operational telemetry signals and root-cause labels._
+
+The synthetic dataset is generated using a simulation engine that models realistic production telemetry patterns.
+
+The generator simulates signals such as:
+
+- CPU usage
+- memory growth
+- request throughput
+- service latency
+- dependency failures
+- error rates
+
+Each synthetic incident is assigned a **root cause label**, and system metrics are generated according to statistical distributions defined in `config/class_config.json`.
+
+The generation process:
+
+1. Load root-cause configuration rules
+2. Sample a root-cause category
+3. Generate baseline system metrics
+4. Apply class-specific metric perturbations
+5. Simulate metric dependencies (CPU, memory, latency)
+6. Generate log signals (OOM events, timeout logs)
+7. Produce the final dataset and perform stratified splitting
 
 Dataset generation is controlled by:
 
@@ -69,13 +128,98 @@ The generated dataset is saved to:
 
 ### Data Split
 
-The output dataset in incidents_raw.csv is split into:
+The raw dataset in `data/raw/incidents_raw.csv` is split into:
 
 - Training set
 - Validation set
-- Test set (optional)
+- Evaluation set
+
+The generated dataset is then used to train and evaluate machine learning models for incident root cause classification.
 
 Full column descriptions are provided in the [Feature Dictionary](#feature-dictionary) section below.
+
+---
+
+## Modeling Pipeline
+
+After generating the synthetic dataset, the modeling stage trains multiple machine learning models to classify the root cause of incidents using system telemetry features.
+
+<img src="docs/images/modeling_pipeline.png" width="600" alt="Modeling Pipeline">
+
+_Figure: Model training pipeline including preprocessing, cross-validation, model comparison, and best model selection._
+
+The modeling workflow includes:
+
+1. Data preprocessing (handling missing values, scaling, encoding)
+2. Training multiple classification algorithms
+3. Hyperparameter tuning using cross-validation
+4. Preliminary model validation
+5. Selecting and saving the best performing model
+
+The final selected model is saved as:
+
+`artifacts/models/best_model.joblib`
+
+The trained candidate models are then passed to the evaluation stage for comparison across validation and evaluation datasets.
+
+---
+
+## Model Evaluation
+
+After training candidate models, their performance is evaluated on the validation and evaluation datasets.
+
+<img src="docs/images/model_evaluation_pipeline.png" width="600" alt="Model Evaluation Pipeline">
+
+_Figure: Model evaluation process measuring classifier performance across multiple metrics._
+
+The evaluation stage measures model performance using several standard classification metrics:
+
+- Accuracy
+- Precision
+- Recall
+- F1 Score
+- Confusion Matrix
+- ROC-AUC (if applicable)
+
+Evaluation results are used to compare candidate models and select the best performing one.
+
+Generated evaluation artifacts include:
+
+- validation leaderboard (`leaderboard_val.csv`)
+- evaluation summary metrics (`evaluation_summary.csv`)
+- detailed evaluation report (`evaluation.json`)
+- confusion matrix visualizations
+
+Once the best performing model is selected, explainability artifacts are generated to interpret model predictions.
+
+---
+
+## Model Explainability
+
+After selecting the best performing model, the pipeline generates explainability artifacts to help interpret model predictions.
+
+Model explainability provides insight into **which system telemetry features most strongly influence incident root cause predictions**.
+
+This is important for:
+
+- Understanding how the model makes decisions
+- Identifying which signals are most relevant during incidents
+- Increasing trust in automated incident classification systems
+- Supporting debugging and operational analysis
+
+The explainability step generates:
+
+- Global feature importance visualizations
+- Ranked feature importance tables
+- Explainability summary reports
+
+Example output:
+
+<img src="docs/images/sample_global_importance.png" width="600" alt="Feature Importance Example">
+
+_Example: Global feature importance showing the relative impact of telemetry features on model predictions._
+
+Detailed explainability artifacts and exported files are described in the **Generated Outputs** section below.
 
 ---
 
@@ -119,9 +263,9 @@ After completion you should see generated outputs in:
 
 ```bash
 artifacts/
-    models/
-    metrics/
-    explain/
+├── models/
+├── metrics/
+└── explain/
 ```
 
 ---
@@ -203,8 +347,11 @@ incident-intelligence/
 │   └── class_config.json           # Class/label configuration
 ├── data/
 │   ├── raw/                        # Raw input data
-│   ├── processed/                  # Cleaned/transformed data
-│   └── incident_root_cause_data.csv
+│   │   └── incidents_raw.csv
+│   └── processed/                  # Train/validation/eval splits
+│       ├── incident_root_cause_train.csv
+│       ├── incident_root_cause_val.csv
+│       └── incident_root_cause_eval.csv
 ├── models/                         # Saved trained models
 ├── notebooks/
 │   ├── explainability_outputs/     # Explainability plots/tables
@@ -240,13 +387,13 @@ The training pipeline evaluates multiple classification algorithms:
 - Gradient Boosting
 - Support Vector Machine (RBF)
 
-Each model is trained using a standardized preprocessing pipeline and evaluated using validation metrics.
+Each model is trained using a standardized preprocessing pipeline and assessed on validation and evaluation datasets.
 
 The best-performing model is automatically selected and saved as:
 
 `artifacts/models/best_model.joblib`
 
-**Note:** All models are trained using the training dataset and evaluated on a validation set to ensure fair comparison.
+**Note:** All models are trained on the training dataset and assessed on validation and evaluation datasets to ensure fair comparison.
 
 ---
 
@@ -269,9 +416,9 @@ Visual explanations and feature importance analysis for different models.
 
 #### Sample Output
 
-Below is an example of the global feature importance visualization generated for each model:
+Below is an example of a global feature importance visualization generated by the explainability pipeline:
 
-![Global Feature Importance Example](docs/images/sample_global_importance.png)
+<img src="docs/images/sample_global_importance.png" width="600" alt="Global Feature Importance Example">
 
 _Example: Global feature importance showing the top features ranked by their contribution to model predictions_
 
@@ -388,7 +535,7 @@ Recommended order: **01 → 02 → 03 → 04**
 
 - The pipeline uses fixed random seeds where possible to ensure reproducible results.
 - Synthetic dataset generation and model training both use deterministic seeds.
-- To regenerate the dataset: incident-generate
+- To regenerate the dataset: `incident-generate`
 - Running the pipeline multiple times with the same configuration should produce similar model results.
 
 ---
