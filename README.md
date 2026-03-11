@@ -18,6 +18,7 @@ The goal is to automatically identify the **underlying cause of production incid
 - Synthetic incident simulation engine for generating labeled telemetry data
 - Modular ML pipeline with CLI-based execution
 - Multiple classification models with automated comparison
+- Automated evaluation outputs including metrics, confusion matrices, comparison plots, and classification reports
 - Model explainability using global feature importance and **local incident analysis**
 - Fully reproducible dataset generation and training pipeline
 
@@ -36,6 +37,7 @@ The goal is to automatically identify the **underlying cause of production incid
 - [Running the Pipeline](#running-the-pipeline)
 - [Project Structure](#project-structure)
 - [Models Evaluated](#models-evaluated)
+- [Model Performance](#model-performance)
 - [Generated Outputs](#generated-outputs)
 - [Feature Dictionary](#feature-dictionary)
 - [Notebooks](#notebooks)
@@ -51,8 +53,8 @@ The project follows a modular ML pipeline architecture:
 
 - **Config layer** – experiment and dataset configuration ([config/](config/))
 - **Core ML logic** – reusable modules ([src/incident_intelligence/](src/incident_intelligence/))
-- **Pipeline scripts** – CLI entrypoints for dataset generation, training, and evaluation ([scripts/](scripts/))
-- **Artifacts** – generated models, metrics, and explainability outputs ([artifacts/](artifacts/))
+- **Pipeline scripts** – CLI entrypoints for dataset generation, training, evaluation, and explainability ([scripts/](scripts/))
+- **Artifacts** – generated models, metrics, plots, reports, and explainability outputs ([artifacts/](artifacts/))
 
 This separation allows the pipeline to be executed via CLI, automated workflows, or orchestration systems.
 
@@ -71,7 +73,7 @@ The ML pipeline consists of the following stages:
 1. Synthetic dataset generation
 2. Dataset splitting (train / validation / evaluation)
 3. Model training with hyperparameter tuning
-4. Model evaluation
+4. Model evaluation with saved plots and reports
 5. Model explainability
 
 ---
@@ -151,7 +153,7 @@ _Figure: Model training pipeline including preprocessing, cross-validation, mode
 
 The modeling workflow includes:
 
-1. Data preprocessing (handling missing values, scaling, encoding)
+1. Preprocessing and scaling when required by the model
 2. Training multiple classification algorithms
 3. Hyperparameter tuning using cross-validation
 4. Preliminary model validation
@@ -178,10 +180,24 @@ _Figure: Model evaluation process measuring classifier performance across multip
 The evaluation stage measures model performance using several standard classification metrics:
 
 - Accuracy
-- Precision
-- Recall
-- F1 Score
+- Precision (macro)
+- Recall (macro)
+- F1 Score (macro)
 - ROC-AUC (if applicable)
+
+### Evaluation Outputs
+
+The evaluation pipeline now saves both machine-readable metrics and human-readable artifacts automatically.
+
+Generated evaluation artifacts include:
+
+- validation leaderboard (`artifacts/metrics/leaderboard_val.csv`)
+- evaluation summary metrics (`artifacts/metrics/evaluation_summary.csv`)
+- detailed evaluation metrics (`artifacts/metrics/evaluation.json`)
+- per-model confusion matrix plots (`artifacts/plots/`)
+- per-model feature-importance plots when supported (`artifacts/plots/`)
+- model comparison chart (`artifacts/plots/model_comparison.png`)
+- per-model classification reports (`artifacts/reports/`)
 
 ### Example Confusion Matrix
 
@@ -193,12 +209,25 @@ _Figure: Confusion matrix illustrating classification performance across inciden
 
 Evaluation results are used to compare candidate models and select the best performing one.
 
-Generated evaluation artifacts include:
+### Saved Plot and Report Structure
 
-- validation leaderboard (`artifacts/metrics/leaderboard_val.csv`)
-- evaluation summary metrics (`artifacts/metrics/evaluation_summary.csv`)
-- detailed evaluation report (`artifacts/metrics/evaluation.json`)
-- confusion matrix visualizations
+```text
+artifacts/
+├── metrics/
+│   ├── evaluation.json
+│   ├── evaluation_summary.csv
+│   ├── leaderboard_val.csv
+│   └── train_val_results.json
+├── plots/
+│   ├── confusion_matrix_<model>.png
+│   ├── feature_importance_<model>.png
+│   └── model_comparison.png
+└── reports/
+    └── <model>_classification_report.md
+```
+
+> ⚠️ **Note**
+> Feature-importance plots are only generated for models that expose importances or coefficients. For example, tree-based models and logistic regression are supported, while SVM (RBF) is skipped.
 
 Once the best-performing model is selected, explainability artifacts are generated to interpret model predictions.
 
@@ -343,6 +372,7 @@ This command will:
 - Generate the synthetic dataset
 - Train the models
 - Evaluate model performance
+- Save metrics, plots, and reports
 - Produce explainability artifacts
 
 After completion you should see generated outputs in:
@@ -351,6 +381,8 @@ After completion you should see generated outputs in:
 artifacts/
 ├── models/
 ├── metrics/
+├── plots/
+├── reports/
 └── explain/
 ```
 
@@ -364,7 +396,7 @@ The pipeline can be executed via **CLI commands (recommended)**, a **Makefile**,
 
 #### 1. Install the project in editable mode
 
-Run from project root
+Run from the project root:
 
 ```bash
 pip install -e .
@@ -429,7 +461,7 @@ python scripts/explain.py
 
 ```text
 incident-intelligence/
-├── artifacts/                      # Pipeline outputs, logs, and generated assets
+├── artifacts/                      # Generated models, metrics, plots, reports, explainability assets
 ├── config/
 │   └── class_config.json           # Class/label configuration
 ├── data/
@@ -439,7 +471,6 @@ incident-intelligence/
 │       ├── incident_root_cause_train.csv
 │       ├── incident_root_cause_val.csv
 │       └── incident_root_cause_eval.csv
-├── models/                         # Saved trained models
 ├── notebooks/
 │   ├── explainability_outputs/     # Explainability plots/tables
 │   ├── 01_data_generation.ipynb
@@ -505,6 +536,12 @@ Full evaluation results are available in:
 
 - `artifacts/metrics/leaderboard_val.csv`
 - `artifacts/metrics/evaluation_summary.csv`
+- `artifacts/metrics/evaluation.json`
+
+Visual summaries and per-model reports are available in:
+
+- `artifacts/plots/`
+- `artifacts/reports/`
 
 ---
 
@@ -519,12 +556,39 @@ This section describes all artifacts generated during model training and evaluat
 
 ### Directory Structure
 
-```
+```text
 artifacts/
 ├── explain/          # Model explainability artifacts
 ├── metrics/          # Performance metrics and evaluation results
-└── models/           # Trained model files
+├── models/           # Trained model files
+├── plots/            # Saved evaluation plots
+└── reports/          # Saved per-model classification reports
 ```
+
+### Evaluation Artifacts (`artifacts/metrics/`, `artifacts/plots/`, `artifacts/reports/`)
+
+#### Metrics Files `artifacts/metrics/`
+
+| File                     | Description                                    |
+| ------------------------ | ---------------------------------------------- |
+| `evaluation.json`        | Detailed evaluation metrics in JSON format     |
+| `evaluation_summary.csv` | Summary of evaluation metrics across models    |
+| `leaderboard_val.csv`    | Validation leaderboard comparing all models    |
+| `train_val_results.json` | Training and validation results for all models |
+
+#### Saved Plots `artifacts/plots/`
+
+| File Pattern                           | Description                                      |
+| -------------------------------------- | ------------------------------------------------ |
+| `plots/confusion_matrix_<model>.png`   | Per-model confusion matrix                       |
+| `plots/feature_importance_<model>.png` | Per-model feature-importance plot when supported |
+| `plots/model_comparison.png`           | Comparison chart across evaluated models         |
+
+#### Saved Reports `artifacts/reports/`
+
+| File Pattern                               | Description                                          |
+| ------------------------------------------ | ---------------------------------------------------- |
+| `reports/<model>_classification_report.md` | Per-model classification report exported in Markdown |
 
 ### Explainability Artifacts (`artifacts/explain/`)
 
@@ -536,7 +600,7 @@ Below is an example of a global feature importance visualization generated by th
 
 <img src="docs/images/sample_global_importance.png" width="600" alt="Global Feature Importance Example">
 
-_Example: Global feature importance showing the top features ranked by their contribution to model predictions_
+_Example: Global feature importance showing the top features ranked by their contribution to model predictions._
 
 The visualizations show:
 
@@ -558,23 +622,11 @@ The visualizations show:
 
 - `explainability_summary.json` - Summary of explainability metrics across all models
 
-### Model Performance Metrics (`artifacts/metrics/`)
-
-Performance evaluation files generated during training:
-
-| File                     | Description                                    |
-| ------------------------ | ---------------------------------------------- |
-| `baseline_metrics.json`  | Baseline model performance metrics             |
-| `evaluation_summary.csv` | Summary of all model evaluations               |
-| `evaluation.json`        | Detailed evaluation metrics in JSON format     |
-| `leaderboard_val.csv`    | Validation leaderboard comparing all models    |
-| `train_val_results.json` | Training and validation results for all models |
-
 ### Trained Models (`artifacts/models/`)
 
 All trained models saved in joblib format for easy deployment:
 
-- `best_model.joblib` - Best performing model from AutoML
+- `best_model.joblib` - Best performing model selected from validation results
 - `Gradient_Boosting_pipeline.joblib` - Gradient Boosting classifier pipeline
 - `Logistic_Regression_pipeline.joblib` - Logistic Regression classifier pipeline
 - `Random_Forest_pipeline.joblib` - Random Forest classifier pipeline
@@ -667,6 +719,7 @@ Recommended order: **01 → 02 → 03 → 04**
 - Keep large datasets and model binaries out of git unless required.
 - Update [`config/class_config.json`](config/class_config.json) and [`src/incident_intelligence/settings.py`](src/incident_intelligence/settings.py) before running custom experiments.
 - Prefer CLI / scripts / Makefile for reproducibility; use notebooks for analysis and diagnostics.
+- Markdown report export may require the optional `tabulate` package for Pandas `to_markdown()` support.
 
 ---
 
