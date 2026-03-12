@@ -51,7 +51,7 @@ The goal is to automatically identify the **underlying cause of production incid
 
 The project follows a modular ML pipeline architecture:
 
-- **Config layer** – experiment and dataset configuration ([config/](config/))
+- **Config layer** – experiment zand dataset configuration ([config/](config/))
 - **Core ML logic** – reusable modules ([src/incident_intelligence/](src/incident_intelligence/))
 - **Pipeline scripts** – CLI entrypoints for dataset generation, training, evaluation, and explainability ([scripts/](scripts/))
 - **Artifacts** – generated models, metrics, plots, reports, and explainability outputs ([artifacts/](artifacts/))
@@ -133,11 +133,11 @@ The generated dataset is saved to:
 
 The raw dataset in `data/raw/incidents_raw.csv` is split into:
 
-- Training set
-- Validation set
-- Evaluation set
+- Training set `data/processed/incidents_root_cause_train.csv`
+- Validation set `data/processed/incidents_root_cause_val.csv`
+- Evaluation set `data/processed/incidents_root_cause_eval.csv`
 
-The generated dataset is then used to train and evaluate machine learning models for incident root cause classification.
+These datasets are then used to train and evaluate machine learning models for incident root cause classification.
 
 Full column descriptions are provided in the [Feature Dictionary](#feature-dictionary) section below.
 
