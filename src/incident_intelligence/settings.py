@@ -16,7 +16,7 @@ def _project_root() -> Path:
 @dataclass(frozen=True)
 class Settings:
     project_root: Path
-    config_dir: Path
+    generator_spec_dir: Path
     data_dir: Path
     models_dir: Path
 
@@ -25,7 +25,7 @@ class Settings:
         root = Path(os.getenv("PROJECT_ROOT", _project_root()))
         return cls(
             project_root=root,
-            config_dir=root / "config",
+            generator_spec_dir=root / "generator_spec",
             data_dir=root / "data",
             models_dir=root / "models",
         )
@@ -40,4 +40,4 @@ def load_json(path: Path) -> Dict[str, Any]:
 
 
 def load_class_config() -> Dict[str, Any]:
-    return load_json(SETTINGS.config_dir / "class_config.json")
+    return load_json(SETTINGS.generator_spec_dir / "class_config.json")

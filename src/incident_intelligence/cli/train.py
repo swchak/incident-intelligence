@@ -6,6 +6,11 @@ from incident_intelligence.modeling.train import (
     TrainValidateConfig,
     run_training,
 )
+from incident_intelligence.config import (
+    TrainCLIConfig,
+    load_config,
+    merge_cli_args,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,43 +20,43 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--train",
         type=str,
-        default="data/processed/incident_root_cause_train.csv",
+        default=None,
         help="Path to train CSV/Parquet",
     )
     parser.add_argument(
         "--val",
         type=str,
-        default="data/processed/incident_root_cause_val.csv",
+        default=None,
         help="Path to validation CSV/Parquet",
     )
     parser.add_argument(
         "--label-col",
         type=str,
-        default="root_cause_label",
+        default=None,
         help="Target label column name",
     )
     parser.add_argument(
         "--models-out-dir",
         type=str,
-        default="artifacts/models",
+        default=None,
         help="Directory to save trained model pipelines",
     )
     parser.add_argument(
         "--metrics-out-json",
         type=str,
-        default="artifacts/metrics/train_val_results.json",
+        default=None,
         help="Path to save detailed training/validation metrics JSON",
     )
     parser.add_argument(
         "--leaderboard-out-csv",
         type=str,
-        default="artifacts/metrics/leaderboard_val.csv",
+        default=None,
         help="Path to save validation leaderboard CSV",
     )
     parser.add_argument(
         "--best-model-out",
         type=str,
-        default="artifacts/models/best_model.joblib",
+        default=None,
         help="Path to save the selected best model",
     )
     return parser
@@ -61,17 +66,19 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    settings = merge_cli_args(args, load_config(TrainCLIConfig, "train"))
+
     cfg = TrainValidateConfig(
-        label_col=args.label_col,
-        models_out_dir=args.models_out_dir,
-        metrics_out_json=args.metrics_out_json,
-        leaderboard_out_csv=args.leaderboard_out_csv,
-        best_model_out=args.best_model_out,
+        label_col=settings.label_col,
+        models_out_dir=settings.models_out_dir,
+        metrics_out_json=settings.metrics_out_json,
+        leaderboard_out_csv=settings.leaderboard_out_csv,
+        best_model_out=settings.best_model_out,
     )
 
     result = run_training(
-        train_path=args.train,
-        val_path=args.val,
+        train_path=settings.train,
+        val_path=settings.val,
         cfg=cfg,
     )
 

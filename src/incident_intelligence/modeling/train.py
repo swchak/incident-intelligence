@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -16,11 +16,23 @@ from incident_intelligence.modeling.baseline import (
     get_models_to_run,
     make_pipeline,
 )
-from incident_intelligence.modeling.evaluate import evaluate_one  # reuse your evaluator
+from incident_intelligence.modeling.evaluate import evaluate_one
+from incident_intelligence.modeling.predict import predict_outputs
 
 
 @dataclass(frozen=True)
 class TrainValidateConfig:
+    """
+    Configuration for train/validation model selection.
+
+    Attributes:
+        label_col: Name of the target column in both train and validation datasets.
+        models_out_dir: Directory where each tuned best pipeline is saved.
+        metrics_out_json: Path for the detailed JSON summary of training and validation results.
+        leaderboard_out_csv: Path for the validation leaderboard CSV.
+        best_model_out: Path where the selected best overall model is saved.
+    """
+
     label_col: str = "root_cause_label"
     models_out_dir: str = "artifacts/models"
     metrics_out_json: str = "artifacts/metrics/train_val_results.json"
@@ -28,7 +40,37 @@ class TrainValidateConfig:
     best_model_out: str = "artifacts/models/best_model.joblib"
 
 
+def _safe_model_name(name: str) -> str:
+    """
+    Convert a human-readable model name into a filesystem-friendly filename stem.
+
+    Example:
+        "SVM (RBF)" -> "SVM_RBF"
+    """
+    return (
+        str(name)
+        .replace(" ", "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace("(", "")
+        .replace(")", "")
+    )
+
+
 def load_df(path: str | Path) -> pd.DataFrame:
+    """
+    Load a tabular dataset from CSV or Parquet.
+
+    Args:
+        path: Path to the dataset file.
+
+    Returns:
+        Loaded dataframe.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file extension is unsupported.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
@@ -39,7 +81,20 @@ def load_df(path: str | Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported file type: {path.suffix} (use .csv or .parquet)")
 
 
-def split_xy(df: pd.DataFrame, label_col: str):
+def split_xy(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Split a dataframe into features and target.
+
+    Args:
+        df: Input dataframe containing features and the target column.
+        label_col: Name of the target column.
+
+    Returns:
+        A tuple of (X, y).
+
+    Raises:
+        ValueError: If the label column is missing.
+    """
     if label_col not in df.columns:
         raise ValueError(f"label_col='{label_col}' not found. Columns={list(df.columns)}")
     X = df.drop(columns=[label_col])
@@ -48,6 +103,14 @@ def split_xy(df: pd.DataFrame, label_col: str):
 
 
 def _json_safe(obj: Any) -> Any:
+    """
+    Recursively convert NumPy-heavy structures into JSON-serializable Python objects.
+
+    Handles:
+    - numpy arrays -> lists
+    - numpy scalar types -> Python scalars
+    - nested dicts/lists
+    """
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     if isinstance(obj, (np.integer, np.floating)):
@@ -64,23 +127,53 @@ def fit_grid(
     y_train: pd.Series,
     *,
     model_name: str,
-    estimator,
+    estimator: Any,
     param_grid: Dict[str, Any],
     base_cfg: BaselineTrainConfig,
 ) -> GridSearchCV:
+    """
+    Build a pipeline, run GridSearchCV, and return the fitted search object.
+
+    Hyperparameters are selected using base_cfg.scoring when provided.
+    Otherwise, GridSearchCV falls back to the estimator's default score method,
+    which is typically accuracy for classifiers.
+
+    Args:
+        X_train: Training feature dataframe.
+        y_train: Training target series.
+        model_name: Human-readable model name. Included for symmetry/debugging.
+        estimator: Estimator instance to wrap in a pipeline.
+        param_grid: GridSearchCV parameter grid using pipeline step names.
+        base_cfg: Shared baseline training configuration.
+
+    Returns:
+        Fitted GridSearchCV instance.
+    """
     pipe = make_pipeline(estimator)
     grid = GridSearchCV(
-        pipe,
-        param_grid,
+        estimator=pipe,
+        param_grid=param_grid,
         cv=base_cfg.cv,
         n_jobs=base_cfg.n_jobs,
         verbose=base_cfg.verbose,
+        scoring=base_cfg.scoring,
+        refit=True,
     )
     grid.fit(X_train, y_train)
     return grid
 
 
-def save_pipeline(pipeline, out_path: Path) -> Path:
+def save_pipeline(pipeline: Any, out_path: Path) -> Path:
+    """
+    Save a fitted pipeline artifact to disk.
+
+    Args:
+        pipeline: Fitted pipeline or estimator to serialize.
+        out_path: Destination path.
+
+    Returns:
+        The output path used for saving.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, out_path)
     return out_path
@@ -93,6 +186,31 @@ def train_and_validate(
     cfg: TrainValidateConfig,
     base_cfg: Optional[BaselineTrainConfig] = None,
 ) -> Dict[str, Any]:
+    """
+    Train all configured baseline models on the train split and evaluate on the validation split.
+
+    Workflow:
+    1. Split train and validation data into features and labels
+    2. Tune each model with GridSearchCV on the train split only
+    3. Evaluate the tuned best estimator on the validation split
+    4. Save each tuned pipeline
+    5. Select the overall best model by validation macro F1
+    6. Write JSON and leaderboard artifacts
+
+    Important:
+        Hyperparameter selection inside GridSearchCV uses base_cfg.scoring
+        (or estimator default scoring if None), while the final model selection
+        across trained models uses validation `val_f1_macro`.
+
+    Args:
+        train_df: Training dataframe.
+        val_df: Validation dataframe.
+        cfg: Train/validation artifact configuration.
+        base_cfg: Optional baseline training configuration controlling CV behavior.
+
+    Returns:
+        A payload containing the selected best model and all per-model validation results.
+    """
     base_cfg = base_cfg or BaselineTrainConfig(label_col=cfg.label_col)
 
     X_train, y_train = split_xy(train_df, cfg.label_col)
@@ -119,16 +237,21 @@ def train_and_validate(
 
         best_pipe = grid.best_estimator_
 
-        # Evaluate on validation set
-        metrics = evaluate_one(best_pipe, X_val, y_val)
+        pred_out = predict_outputs(best_pipe, X_val)
 
-        # Add a couple leaderboard-friendly numbers
-        y_pred = best_pipe.predict(X_val)
-        metrics["val_accuracy"] = float(accuracy_score(y_val, y_pred))
-        metrics["val_f1_macro"] = float(f1_score(y_val, y_pred, average="macro"))
+        metrics = evaluate_one(
+            best_pipe,
+            X_val,
+            y_val,
+            pred_out=pred_out,
+        )
 
-        # Save pipeline
-        model_file = models_out_dir / f"{name.replace(' ', '_')}_pipeline.joblib"
+        y_pred = pred_out["y_pred"]
+
+        metrics["val_accuracy"] = metrics["accuracy"]
+        metrics["val_f1_macro"] = metrics["f1_macro"]
+
+        model_file = models_out_dir / f"{_safe_model_name(name)}_pipeline.joblib"
         save_pipeline(best_pipe, model_file)
 
         results.append(
@@ -136,22 +259,25 @@ def train_and_validate(
                 "model_name": name,
                 "model_path": str(model_file),
                 "best_params": grid.best_params_,
+                "best_cv_score": float(grid.best_score_),
+                "cv_scoring": base_cfg.scoring or "estimator_default_score",
                 "val_metrics": metrics,
             }
         )
 
         print(f"[OK] {name}: val_accuracy={metrics['val_accuracy']:.4f}  saved={model_file}")
 
-    # pick best by macro F1 (usually better than accuracy with imbalance)
     best = max(results, key=lambda r: r["val_metrics"]["val_f1_macro"])
-    best_model_path = Path(best["model_path"])
     best_out_path = Path(cfg.best_model_out)
     best_out_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(joblib.load(best_model_path), best_out_path)
+
+    best_pipeline = joblib.load(best["model_path"])
+    joblib.dump(best_pipeline, best_out_path)
 
     payload = {
         "label_col": cfg.label_col,
         "selection_metric": "val_f1_macro",
+        "cv_scoring": base_cfg.scoring or "estimator_default_score",
         "best_model": {
             "model_name": best["model_name"],
             "model_path": str(best_out_path),
@@ -161,10 +287,9 @@ def train_and_validate(
         "all_models": results,
     }
 
-    # Write JSON + leaderboard CSV
     metrics_path = Path(cfg.metrics_out_json)
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_path.write_text(json.dumps(_json_safe(payload), indent=2))
+    metrics_path.write_text(json.dumps(_json_safe(payload), indent=2), encoding="utf-8")
 
     leaderboard_rows = [
         {
@@ -175,19 +300,25 @@ def train_and_validate(
         }
         for r in results
     ]
-    leaderboard_df = pd.DataFrame(leaderboard_rows).sort_values("val_f1_macro", ascending=False)
+    leaderboard_df = pd.DataFrame(leaderboard_rows).sort_values(
+        "val_f1_macro",
+        ascending=False,
+    )
 
     leaderboard_path = Path(cfg.leaderboard_out_csv)
     leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     leaderboard_df.to_csv(leaderboard_path, index=False)
 
-    print(f"\nBest model: {payload['best_model']['model_name']}  "
-          f"(val_f1_macro={payload['best_model']['val_f1_macro']:.4f})")
+    print(
+        f"\nBest model: {payload['best_model']['model_name']}  "
+        f"(val_f1_macro={payload['best_model']['val_f1_macro']:.4f})"
+    )
     print(f"Wrote metrics JSON: {metrics_path}")
     print(f"Wrote leaderboard:  {leaderboard_path}")
     print(f"Wrote best model:   {best_out_path}")
 
     return payload
+
 
 def run_training(
     train_path: str | Path,
@@ -196,6 +327,18 @@ def run_training(
     cfg: TrainValidateConfig,
     base_cfg: Optional[BaselineTrainConfig] = None,
 ) -> Dict[str, Any]:
+    """
+    Load train and validation datasets from disk, then run train/validation model selection.
+
+    Args:
+        train_path: Path to the training dataset.
+        val_path: Path to the validation dataset.
+        cfg: Train/validation artifact configuration.
+        base_cfg: Optional baseline training configuration controlling CV behavior.
+
+    Returns:
+        The same payload returned by train_and_validate().
+    """
     train_df = load_df(train_path)
     val_df = load_df(val_path)
     return train_and_validate(train_df, val_df, cfg=cfg, base_cfg=base_cfg)

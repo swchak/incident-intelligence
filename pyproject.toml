@@ -22,3 +22,57 @@ incident-eval = "incident_intelligence.cli.evaluate:main"
 incident-explain = "incident_intelligence.cli.explain:main"
 incident-explain-local = "incident_intelligence.cli.explain_local:main"
 incident-pipeline = "incident_intelligence.cli.pipeline:main"
+
+[tool.incident_intelligence.generator]
+n_samples = 10000
+seed = 42
+raw_out = "raw/incidents_raw.csv"
+processed_dir = "processed"
+train_size = 0.70
+val_size = 0.15
+label_col = "root_cause_label"
+
+[tool.incident_intelligence.train]
+train = "data/processed/incident_root_cause_train.csv"
+val = "data/processed/incident_root_cause_val.csv"
+label_col = "root_cause_label"
+models_out_dir = "artifacts/models"
+metrics_out_json = "artifacts/metrics/train_val_results.json"
+leaderboard_out_csv = "artifacts/metrics/leaderboard_val.csv"
+best_model_out = "artifacts/models/best_model.joblib"
+
+[tool.incident_intelligence.evaluate]
+data = "data/processed/incident_root_cause_eval.csv"
+label_col = "root_cause_label"
+models_dir = "artifacts/models"
+metrics_out = "artifacts/metrics/evaluation.json"
+summary_csv_out = "artifacts/metrics/evaluation_summary.csv"
+
+[tool.incident_intelligence.explain]
+data = "data/processed/incident_root_cause_eval.csv"
+label_col = "root_cause_label"
+models_dir = "artifacts/models"
+out_dir = "artifacts/explain"
+background_n = 100
+explain_n = 200
+kernel_bg = 40
+kernel_nsamples = 80
+perm_repeats = 10
+random_state = 42
+top_k = 20
+
+[tool.incident_intelligence.explain_local]
+data = "data/processed/incident_root_cause_eval.csv"
+label_col = "root_cause_label"
+out_dir = "artifacts/explain"
+background_n = 100
+explain_n = 200
+kernel_bg = 40
+kernel_nsamples = 80
+perm_repeats = 10
+random_state = 42
+top_k = 20
+n_examples = 3
+top_k_classes = 3
+top_features_per_class = 8
+model = "artifacts/models/best_model.joblib"

@@ -24,6 +24,21 @@ The goal is to automatically identify the **underlying cause of production incid
 
 ---
 
+## Command Line Interface
+
+The project exposes CLI commands for running the pipeline:
+
+| Command                  | Description                      |
+| ------------------------ | -------------------------------- |
+| `incident-generate`      | Generate synthetic dataset       |
+| `incident-train`         | Train candidate models           |
+| `incident-evaluate`      | Evaluate trained models          |
+| `incident-explain`       | Generate global explainability   |
+| `incident-explain-local` | Generate local incident analysis |
+| `incident-pipeline`      | Run the full pipeline            |
+
+---
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
@@ -51,9 +66,9 @@ The goal is to automatically identify the **underlying cause of production incid
 
 The project follows a modular ML pipeline architecture:
 
-- **Config layer** – experiment zand dataset configuration ([config/](config/))
+- **Config layer** – experiment and dataset configuration ([config/](config/))
 - **Core ML logic** – reusable modules ([src/incident_intelligence/](src/incident_intelligence/))
-- **Pipeline scripts** – CLI entrypoints for dataset generation, training, evaluation, and explainability ([scripts/](scripts/))
+- **CLI entrypoints** – command-line tools for dataset generation, training, evaluation, and explainability ([src/incident_intelligence/cli/](src/incident_intelligence/cli/))
 - **Artifacts** – generated models, metrics, plots, reports, and explainability outputs ([artifacts/](artifacts/))
 
 This separation allows the pipeline to be executed via CLI, automated workflows, or orchestration systems.
@@ -80,19 +95,13 @@ The ML pipeline consists of the following stages:
 
 ## Synthetic Dataset
 
-This project uses a **synthetically generated** incident dataset for development, testing, and evaluation.
+This project uses a **synthetically generated incident dataset**.
 
-The dataset is generated using a configurable simulation framework that models common production failure scenarios observed in real systems.
-
-### Synthetic Incident Generation Pipeline
+The dataset simulates common production failure scenarios using configurable statistical rules.
 
 <img src="docs/images/synthetic_incident_pipeline.png" width="600" alt="Synthetic Incident Generation Pipeline">
 
-_Figure: Synthetic incident generation pipeline used to simulate operational telemetry signals and root-cause labels._
-
-The synthetic dataset is generated using a simulation engine that models realistic production telemetry patterns.
-
-The generator simulates signals such as:
+The generator simulates operational telemetry signals such as:
 
 - CPU usage
 - memory growth
@@ -101,9 +110,14 @@ The generator simulates signals such as:
 - dependency failures
 - error rates
 
-Each synthetic incident is assigned a **root cause label**, and system metrics are generated according to statistical distributions defined in `config/class_config.json`.
+Each synthetic incident is assigned a root cause label and telemetry metrics are generated according to
+statistical distributions defined in:
 
-The generation process:
+[`generator_spec/class_config.json`](generator_spec/class_config.json).
+
+This file defines simulation rules for each root cause category.
+
+### Synthetic Incident Generation Process
 
 1. Load root-cause configuration rules
 2. Sample a root-cause category
@@ -113,23 +127,15 @@ The generation process:
 6. Generate log signals (OOM events, timeout logs)
 7. Produce the final dataset and perform stratified splitting
 
-Dataset generation is controlled by:
+Simulation logic lives in: [`src/incident_intelligence/data/`](src/incident_intelligence/data/)
 
-- Simulation logic in [`src/incident_intelligence/data/`](src/incident_intelligence/data/)
-- Generation parameters defined in [`config/class_config.json`](config/class_config.json)
+### Dataset Output
 
-### Output Dataset
+Generated files:
 
-The generated dataset is saved to:
-
-- **File**: [`data/raw/incidents_raw.csv`](data/raw/incidents_raw.csv)
-- **Format**: CSV (UTF-8 encoded)
-- **Granularity**: One row per synthetic incident snapshot
-- **Privacy**: Contains **no production data or PII**
-
-> ⚠️ **Important**: All data is synthetically generated to simulate realistic incident patterns. This is not real production data.
-
-### Data Split
+```text
+data/raw/incidents_raw.csv
+```
 
 The raw dataset in `data/raw/incidents_raw.csv` is split into:
 
@@ -137,29 +143,27 @@ The raw dataset in `data/raw/incidents_raw.csv` is split into:
 - Validation set `data/processed/incidents_root_cause_val.csv`
 - Evaluation set `data/processed/incidents_root_cause_eval.csv`
 
-These datasets are then used to train and evaluate machine learning models for incident root cause classification.
+Each row represents a synthetic incident snapshot.
 
-Full column descriptions are provided in the [Feature Dictionary](#feature-dictionary) section below.
+> ⚠️ **Important**: All data is synthetic and contains **no production telemetry or PII**
 
 ---
 
 ## Modeling Pipeline
 
-After generating the synthetic dataset, the modeling stage trains multiple machine learning models to classify the root cause of incidents using system telemetry features.
+After dataset generation, the modeling stage trains multiple classification models.
 
 <img src="docs/images/modeling_pipeline.png" width="600" alt="Modeling Pipeline">
 
-_Figure: Model training pipeline including preprocessing, cross-validation, model comparison, and best model selection._
+The training workflow includes:
 
-The modeling workflow includes:
-
-1. Preprocessing and scaling when required by the model
+1. Feature preprocessing and scaling when required by the model
 2. Training multiple classification algorithms
-3. Hyperparameter tuning using cross-validation
-4. Preliminary model validation
-5. Selecting and saving the best performing model
+3. Hyperparameter tuning via cross-validation
+4. Preliminary validation based model comparison
+5. Best model selection
 
-The final selected model is saved as:
+The best performing model is saved as:
 
 ```text
 artifacts/models/best_model.joblib
@@ -175,8 +179,6 @@ After training candidate models, their performance is evaluated on the validatio
 
 <img src="docs/images/model_evaluation_pipeline.png" width="600" alt="Model Evaluation Pipeline">
 
-_Figure: Model evaluation process measuring classifier performance across multiple metrics._
-
 The evaluation stage measures model performance using several standard classification metrics:
 
 - Accuracy
@@ -191,139 +193,66 @@ The evaluation pipeline now saves both machine-readable metrics and human-readab
 
 Generated evaluation artifacts include:
 
-- validation leaderboard (`artifacts/metrics/leaderboard_val.csv`)
-- evaluation summary metrics (`artifacts/metrics/evaluation_summary.csv`)
-- detailed evaluation metrics (`artifacts/metrics/evaluation.json`)
-- per-model confusion matrix plots (`artifacts/plots/`)
-- per-model feature-importance plots when supported (`artifacts/plots/`)
-- model comparison chart (`artifacts/plots/model_comparison.png`)
-- per-model classification reports (`artifacts/reports/`)
-
-### Example Confusion Matrix
-
-Below is an example confusion matrix for the best-performing model on the evaluation dataset.
-
-<img src="docs/images/confusion_matrix.png" width="500" alt="Confusion Matrix">
-
-_Figure: Confusion matrix illustrating classification performance across incident root-cause categories._
-
-Evaluation results are used to compare candidate models and select the best performing one.
-
-### Saved Plot and Report Structure
-
 ```text
 artifacts/
 ├── metrics/
-│   ├── evaluation.json
-│   ├── evaluation_summary.csv
-│   ├── leaderboard_val.csv
+│   ├── evaluation.json           # detailed evaluation metrics
+│   ├── evaluation_summary.csv    # evaluation summary metrics
+│   ├── leaderboard_val.csv       # validation leaderboard
 │   └── train_val_results.json
 ├── plots/
-│   ├── confusion_matrix_<model>.png
-│   ├── feature_importance_<model>.png
-│   └── model_comparison.png
+│   ├── confusion_matrix_<model>.png    # per-model confusion matrix plots
+│   ├── feature_importance_<model>.png. # per-model feature-importance plots when supported
+│   └── model_comparison.png            # model comparison chart
 └── reports/
-    └── <model>_classification_report.md
+    └── <model>_classification_report.md.  # per-model classification reports
 ```
+
+Example Confusion Matrix:
+
+<img src="docs/images/confusion_matrix.png" width="500" alt="Confusion Matrix">
 
 > ⚠️ **Note**
 > Feature-importance plots are only generated for models that expose importances or coefficients. For example, tree-based models and logistic regression are supported, while SVM (RBF) is skipped.
-
-Once the best-performing model is selected, explainability artifacts are generated to interpret model predictions.
 
 ---
 
 ## Model Explainability
 
-After selecting the best performing model, the pipeline generates explainability artifacts to help interpret model predictions.
+Explainability artifacts help interpret model predictions and identify important telemetry signals.
 
-Model explainability provides insight into **which system telemetry features most strongly influence incident root cause predictions**.
-
-This is important for:
-
-- Understanding how the model makes decisions
-- Identifying which signals are most relevant during incidents
-- Increasing trust in automated incident classification systems
-- Supporting debugging and operational analysis
-
-The explainability step generates:
+Outputs include:
 
 - Global feature importance visualizations
-- Ranked feature importance tables
+- Feature ranking tables
 - Explainability summary reports
 
-Example output:
+Example:
 
 <img src="docs/images/sample_global_importance.png" width="600" alt="Feature Importance Example">
 
-_Example: Global feature importance showing the relative impact of telemetry features on model predictions._
-
-Detailed explainability artifacts and exported files are described in the **Generated Outputs** section below.
-
 ### Local Incident Root Cause Analysis
 
-In addition to global feature importance, the project supports **local explainability** to analyze individual incident predictions.
+Local explainability analyzes **individual incident predictions**.
 
-Local explainability helps answer the question:
+Artificats generated:
 
-> _Why did the model classify this specific incident as a particular root cause?_
+- SHAP waterfall plots
+- Root cause probability ranking
+- Feature contribution breakdown
+- HTML incident analysis reports
 
-For selected incidents in the evaluation dataset, the pipeline generates:
-
-- SHAP waterfall plots for the predicted class
-- Top candidate root causes with prediction probabilities
-- Feature contributions driving each prediction
-- Human-readable HTML root cause analysis reports
-
-These reports simulate a real incident investigation workflow by showing which telemetry signals influenced the model's decision.
-
-#### Running Local Explainability
-
-Explain predictions for the best trained model:
-
-```bash
-incident-explain-local --model artifacts/models/best_model.joblib
-```
-
-Explain specific incidents:
-
-```bash
-incident-explain-local \
-  --model artifacts/models/best_model.joblib \
-  --row-indices 12 47 108
-```
-
-Explain a random subset of incidents:
-
-```bash
-incident-explain-local \
-  --model artifacts/models/best_model.joblib \
-  --n-examples 5
-```
-
-#### Generated Reports
-
-Local explainability artifacts are written to:
+Example output directory:
 
 ```text
-artifacts/
-└── explain/
-    └── <model_name>/
-        └── local/
+artifacts/explain/<model_name>/local/
 ```
 
-Example Output:
+Example files:
 
 ```text
 row_12_waterfall.png
 row_12_report.html
-
-row_47_waterfall.png
-row_47_report.html
-
-row_108_waterfall.png
-row_108_report.html
-
 local_explainability_index.html
 local_explainability_summary.json
 ```
@@ -333,8 +262,6 @@ Open the following file in a browser:
 ```text
 artifacts/explain/<model_name>/local/local_explainability_index.html
 ```
-
-This page links to all generated incident investigation reports.
 
 ---
 
@@ -347,113 +274,63 @@ git clone https://github.com/<your-org>/incident-intelligence.git
 cd incident-intelligence
 ```
 
-### 2. Create and activate a virtual environment (macOS / Linux)
+### 2. Create virtual environment (macOS / Linux)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install project
 
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### 4. Run the pipeline
-
-```bash
-incident-pipeline
-```
-
-This command will:
-
-- Generate the synthetic dataset
-- Train the models
-- Evaluate model performance
-- Save metrics, plots, and reports
-- Produce explainability artifacts
-
-After completion you should see generated outputs in:
-
-```text
-artifacts/
-├── models/
-├── metrics/
-├── plots/
-├── reports/
-└── explain/
-```
-
 ---
 
 ## Running the Pipeline
 
-The pipeline can be executed via **CLI commands (recommended)**, a **Makefile**, or **direct scripts**.
+### CLI (Recommended)
 
-### Option 1 - CLI Commands (Recommended)
-
-#### 1. Install the project in editable mode
-
-Run from the project root:
-
-```bash
-pip install -e .
-```
-
-#### 2. Run the full pipeline
+Run the full pipeline
 
 ```bash
 incident-pipeline
 ```
 
-#### 3. Run individual stages
+Run individual stages
 
 ```bash
 incident-generate
 incident-train
-incident-eval
+incident-evaluate
 incident-explain
 incident-explain-local --model artifacts/models/best_model.joblib
 ```
 
-> Note: If the CLI commands are not available, ensure you ran `pip install -e .` successfully.
-> The CLI entry points expect modules under `incident_intelligence.cli.*`. If you prefer not to use the CLI, use one of the alternatives below.
+These commands correspond to modules under: [src/incident_intelligence/cli/](src/incident_intelligence/cli/)
 
-### Option 2 - Makefile
+### Makefile
 
-#### 1. Run the full pipeline
+Run full pipeline
 
 ```bash
-make pipeline  # run full pipeline
+make pipeline
 ```
 
-#### 2. Run individual steps
+Run individual steps
 
 ```bash
 make generate
 make train
 make evaluate
 make explain
+make explain-local
 ```
 
-### Option 3 - Run Scripts Directly
-
-#### 1. Run the full pipeline
-
-```bash
-python scripts/run_pipeline.py
-```
-
-#### 2. Run individual steps
-
-```bash
-python scripts/generate_dataset.py
-python scripts/train.py
-python scripts/evaluate.py
-python scripts/explain.py
-```
+**Note:** The Makefile internally calls the same CLI commands used above.
 
 ---
 
@@ -462,35 +339,30 @@ python scripts/explain.py
 ```text
 incident-intelligence/
 ├── artifacts/                      # Generated models, metrics, plots, reports, explainability assets
-├── config/
-│   └── class_config.json           # Class/label configuration
-├── data/
-│   ├── raw/                        # Raw input data
+├── generator_spec/
+│   └── class_config.json           # Synthetic incident simulation rules
+├── data/                           # Generated synthetic data files
+│   ├── raw/                        # Raw Data generated using simulation rules
 │   │   └── incidents_raw.csv
-│   └── processed/                  # Train/validation/eval splits
+│   └── processed/                  # Train/validation/eval splits of raw data
 │       ├── incident_root_cause_train.csv
 │       ├── incident_root_cause_val.csv
 │       └── incident_root_cause_eval.csv
 ├── notebooks/
-│   ├── explainability_outputs/     # Explainability plots/tables
 │   ├── 01_data_generation.ipynb
 │   ├── 02_eda.ipynb
 │   ├── 03_baseline_model.ipynb
 │   └── 04_model_explainability.ipynb
-├── scripts/
-│   ├── generate_dataset.py         # Build dataset artifacts
-│   ├── train.py                    # Train model(s)
-│   ├── evaluate.py                 # Evaluate model(s)
-│   ├── explain.py                  # Explainability artifacts (e.g., SHAP)
-│   └── run_pipeline.py             # End-to-end pipeline runner
 ├── src/incident_intelligence/
-│   ├── api/                        # API-related code
-│   ├── data/                       # Data processing utilities
-│   ├── modeling/                   # Modeling/training utilities
-│   ├── __init__.py
-│   └── settings.py                 # Central project settings
+│   ├── cli/                        # CLI commands
+│   ├── data/                       # Synthetic data generator
+│   ├── modeling/                   # Training, evaluation, explainability
+│   ├──  config.py                  # Config loading and CLI/TOML merge logic
+│   ├── settings.py                 # Project paths and configuration helpers
+│   └── __init__.py
 ├── pyproject.toml
 ├── requirements.txt
+├── Makefile
 └── README.md
 ```
 
@@ -498,26 +370,16 @@ incident-intelligence/
 
 ## Models Evaluated
 
-The training pipeline evaluates multiple classification algorithms:
-
 - Logistic Regression
 - Random Forest
 - Gradient Boosting
 - Support Vector Machine (RBF)
 
-Each model is trained using a standardized preprocessing pipeline and assessed on validation and evaluation datasets.
-
-The best-performing model is automatically selected and saved as:
-
-`artifacts/models/best_model.joblib`
-
-**Note:** All models are trained on the training dataset and assessed on validation and evaluation datasets to ensure fair comparison.
+The best-performing model is automatically selected
 
 ---
 
 ## Model Performance
-
-The training pipeline evaluates several candidate models and compares their performance using validation and evaluation datasets.
 
 Example validation leaderboard (results will vary depending on generated data):
 
@@ -528,33 +390,11 @@ Example validation leaderboard (results will vary depending on generated data):
 | Gradient Boosting   | **0.90** | **0.89**  | **0.89** | **0.89** |
 | SVM (RBF)           | 0.87     | 0.86      | 0.85     | 0.85     |
 
-The best-performing model is automatically selected and saved as:
-
-`artifacts/models/best_model.joblib`
-
-Full evaluation results are available in:
-
-- `artifacts/metrics/leaderboard_val.csv`
-- `artifacts/metrics/evaluation_summary.csv`
-- `artifacts/metrics/evaluation.json`
-
-Visual summaries and per-model reports are available in:
-
-- `artifacts/plots/`
-- `artifacts/reports/`
-
 ---
 
 ## Generated Outputs
 
-> ⚠️ **Note**
->
-> Files inside the `artifacts/` directory are **generated outputs** produced by the pipeline.
-> They are **not checked into version control** and will appear only after running the pipeline locally.
-
-This section describes all artifacts generated during model training and evaluation. These files are created in the [`artifacts/`](artifacts/) directory when you run the training pipeline.
-
-### Directory Structure
+Pipeline outputs are written to:
 
 ```text
 artifacts/
@@ -565,74 +405,7 @@ artifacts/
 └── reports/          # Saved per-model classification reports
 ```
 
-### Evaluation Artifacts (`artifacts/metrics/`, `artifacts/plots/`, `artifacts/reports/`)
-
-#### Metrics Files `artifacts/metrics/`
-
-| File                     | Description                                    |
-| ------------------------ | ---------------------------------------------- |
-| `evaluation.json`        | Detailed evaluation metrics in JSON format     |
-| `evaluation_summary.csv` | Summary of evaluation metrics across models    |
-| `leaderboard_val.csv`    | Validation leaderboard comparing all models    |
-| `train_val_results.json` | Training and validation results for all models |
-
-#### Saved Plots `artifacts/plots/`
-
-| File Pattern                           | Description                                      |
-| -------------------------------------- | ------------------------------------------------ |
-| `plots/confusion_matrix_<model>.png`   | Per-model confusion matrix                       |
-| `plots/feature_importance_<model>.png` | Per-model feature-importance plot when supported |
-| `plots/model_comparison.png`           | Comparison chart across evaluated models         |
-
-#### Saved Reports `artifacts/reports/`
-
-| File Pattern                               | Description                                          |
-| ------------------------------------------ | ---------------------------------------------------- |
-| `reports/<model>_classification_report.md` | Per-model classification report exported in Markdown |
-
-### Explainability Artifacts (`artifacts/explain/`)
-
-Visual explanations and feature importance analysis for different models.
-
-#### Sample Output
-
-Below is an example of a global feature importance visualization generated by the explainability pipeline:
-
-<img src="docs/images/sample_global_importance.png" width="600" alt="Global Feature Importance Example">
-
-_Example: Global feature importance showing the top features ranked by their contribution to model predictions._
-
-The visualizations show:
-
-- **Feature Names**: Input variables from the dataset (e.g., `avg_cpu_usage`, `mem_growth`)
-- **Importance Scores**: Quantitative measure of each feature's impact on predictions
-- **Ranked Display**: Features ordered from most to least important
-
-#### Generated Files
-
-| Model               | Global Importance Plot                               | CSV Data                                             |
-| ------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
-| Best Model          | `best_model_global_importance.png`                   | `best_model_global_importance.csv`                   |
-| Gradient Boosting   | `Gradient_Boosting_pipeline_global_importance.png`   | `Gradient_Boosting_pipeline_global_importance.csv`   |
-| Logistic Regression | `Logistic_Regression_pipeline_global_importance.png` | `Logistic_Regression_pipeline_global_importance.csv` |
-| Random Forest       | `Random_Forest_pipeline_global_importance.png`       | `Random_Forest_pipeline_global_importance.csv`       |
-| SVM (RBF)           | `SVM_(RBF)_pipeline_global_importance.png`           | `SVM_(RBF)_pipeline_global_importance.csv`           |
-
-**Additional Files:**
-
-- `explainability_summary.json` - Summary of explainability metrics across all models
-
-### Trained Models (`artifacts/models/`)
-
-All trained models saved in joblib format for easy deployment:
-
-- `best_model.joblib` - Best performing model selected from validation results
-- `Gradient_Boosting_pipeline.joblib` - Gradient Boosting classifier pipeline
-- `Logistic_Regression_pipeline.joblib` - Logistic Regression classifier pipeline
-- `Random_Forest_pipeline.joblib` - Random Forest classifier pipeline
-- `SVM_(RBF)_pipeline.joblib` - Support Vector Machine with RBF kernel pipeline
-
-**Note:** Model artifacts are not checked into version control due to file size. Run the training pipeline to generate them locally.
+Artifacts are generated locally and **not stored in version control**.
 
 ---
 
@@ -671,55 +444,44 @@ Based on the synthetic data generation, the following root cause categories are 
 - `traffic_spike` - Sudden increase in traffic causing system overload
 - `normal` - No incident / normal operational state
 
-### CSV Header Format
-
-```csv
-avg_cpu_usage,mem_growth,oom_log_count,request_rate,error_rate,latency,upstream_error_rate,dependency_latency,timeout_log_count,root_cause_label
-```
-
-### Sample Data Row
-
-```csv
-87.00089104373197,2.504895389677996,4,549.031934807165,2.0242063636527776,441.29667286645815,1.7617296375792422,419.79306285037956,2,memory_leak
-```
-
 ---
 
 ## Notebooks
 
-The following notebooks provide exploratory analysis and model experimentation.
+Exploratory notebooks are included for analysis and experimentation.
 
-- **[01_data_generation.ipynb](notebooks/01_data_generation.ipynb)**  
-  Creates and validates the working dataset from source inputs.
+Recommended order:
 
-- **[02_eda.ipynb](notebooks/02_eda.ipynb)**  
-  Performs exploratory data analysis (distributions, missing values, trends, correlations).
-
-- **[03_baseline_model.ipynb](notebooks/03_baseline_model.ipynb)**  
-  Trains baseline models and compares initial performance.
-
-- **[04_model_explainability.ipynb](notebooks/04_model_explainability.ipynb)**  
-  Produces explainability outputs such as feature importance and model interpretation artifacts.
-
-Recommended order: **01 → 02 → 03 → 04**
+- **[01_data_generation.ipynb](notebooks/01_data_generation.ipynb)**
+- **[02_eda.ipynb](notebooks/02_eda.ipynb)**
+- **[03_baseline_model.ipynb](notebooks/03_baseline_model.ipynb)**
+- **[04_model_explainability.ipynb](notebooks/04_model_explainability.ipynb)**
 
 ---
 
 ## Reproducibility
 
-- The pipeline uses fixed random seeds where possible to ensure reproducible results.
-- Synthetic dataset generation and model training both use deterministic seeds.
-- To regenerate the dataset: `incident-generate`
-- Running the pipeline multiple times with the same configuration should produce similar model results.
+The pipeline uses fixed random seeds for reproducibility.
+
+Regenerate dataset:
+
+```bash
+incident-generate
+```
+
+Run full pipeline:
+
+```bash
+incident-pipeline
+```
 
 ---
 
 ## Development Notes
 
-- Keep large datasets and model binaries out of git unless required.
-- Update [`config/class_config.json`](config/class_config.json) and [`src/incident_intelligence/settings.py`](src/incident_intelligence/settings.py) before running custom experiments.
-- Prefer CLI / scripts / Makefile for reproducibility; use notebooks for analysis and diagnostics.
-- Markdown report export may require the optional `tabulate` package for Pandas `to_markdown()` support.
+- Prefer CLI commands or Makefile for reproducible workflows
+- Use notebooks only for exploration and experimentation.
+- Avoid committing generated artifacts to git
 
 ---
 

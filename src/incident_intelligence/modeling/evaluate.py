@@ -1,3 +1,26 @@
+"""
+Evaluate trained classification pipelines and export metrics, plots, and reports.
+
+This module is intended to run after model training has completed and one or
+more serialized sklearn `Pipeline` artifacts have been written to disk. It
+provides utilities to:
+
+- load evaluation data from CSV or Parquet
+- load one or more trained pipeline artifacts
+- compute standard classification metrics
+- compute ROC-AUC when probability estimates are available
+- generate confusion matrix, feature-importance, and model-comparison plots
+- write markdown classification reports and JSON/CSV summaries
+
+Typical usage:
+    cfg = EvalConfig()
+    results = run_evaluation(
+        data_path="data/test.csv",
+        cfg=cfg,
+        models_dir="artifacts/models",
+    )
+"""
+
 from __future__ import annotations
 
 import json
@@ -6,11 +29,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import joblib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
-
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -19,9 +41,24 @@ from sklearn.metrics import (
 )
 from sklearn.pipeline import Pipeline
 
+from incident_intelligence.modeling.predict import predict_outputs
+
 
 @dataclass(frozen=True)
 class EvalConfig:
+    """
+    Configuration for offline model evaluation.
+
+    Attributes:
+        label_col: Target column expected in the evaluation dataframe.
+        metrics_out: Destination JSON file containing detailed per-model metrics.
+        summary_csv_out: Optional CSV leaderboard containing a compact summary of
+            the key metrics for each evaluated model. Set to None to disable CSV
+            export.
+        plots_dir: Directory where generated PNG plots are written.
+        reports_dir: Directory where markdown classification reports are written.
+    """
+
     label_col: str = "root_cause_label"
     metrics_out: str = "artifacts/metrics/evaluation.json"
     summary_csv_out: Optional[str] = "artifacts/metrics/evaluation_summary.csv"
@@ -29,7 +66,21 @@ class EvalConfig:
     reports_dir: str = "artifacts/reports"
 
 
+
 def load_df(path: str | Path) -> pd.DataFrame:
+    """
+    Load a tabular dataset from CSV or Parquet.
+
+    Args:
+        path: Path to the input dataset.
+
+    Returns:
+        Loaded dataframe.
+
+    Raises:
+        FileNotFoundError: If the dataset path does not exist.
+        ValueError: If the file type is unsupported.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
@@ -40,7 +91,21 @@ def load_df(path: str | Path) -> pd.DataFrame:
     raise ValueError(f"Unsupported file type: {path.suffix} (use .csv or .parquet)")
 
 
+
 def load_pipeline(path: str | Path) -> Pipeline:
+    """
+    Load a serialized sklearn Pipeline artifact.
+
+    Args:
+        path: Path to a `.joblib` model artifact.
+
+    Returns:
+        Deserialized sklearn Pipeline.
+
+    Raises:
+        FileNotFoundError: If the model file is missing.
+        TypeError: If the loaded object is not an sklearn Pipeline.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Model not found: {path}")
@@ -50,14 +115,41 @@ def load_pipeline(path: str | Path) -> Pipeline:
     return model
 
 
+
 def find_model_files(models_dir: str | Path) -> List[Path]:
+    """
+    Find all serialized model artifacts inside a directory.
+
+    Args:
+        models_dir: Directory containing `.joblib` model files.
+
+    Returns:
+        Sorted list of model paths.
+
+    Raises:
+        FileNotFoundError: If the models directory does not exist.
+    """
     models_dir = Path(models_dir)
     if not models_dir.exists():
         raise FileNotFoundError(f"Models directory not found: {models_dir}")
     return sorted(models_dir.glob("*.joblib"))
 
 
+
 def split_xy(df: pd.DataFrame, label_col: str) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Split a dataframe into features and target.
+
+    Args:
+        df: Input dataframe containing both features and target.
+        label_col: Name of the target column.
+
+    Returns:
+        Tuple of `(X, y)`.
+
+    Raises:
+        ValueError: If the target column is not present.
+    """
     if label_col not in df.columns:
         raise ValueError(f"label_col='{label_col}' not found. Columns={list(df.columns)}")
     X = df.drop(columns=[label_col])
@@ -65,7 +157,15 @@ def split_xy(df: pd.DataFrame, label_col: str) -> tuple[pd.DataFrame, pd.Series]
     return X, y
 
 
+
 def _json_safe(obj: Any) -> Any:
+    """
+    Recursively convert NumPy-heavy objects into JSON-serializable objects.
+
+    This utility is used before writing metrics to disk because sklearn metric
+    outputs often include NumPy arrays and scalar types that `json.dumps`
+    cannot serialize directly.
+    """
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     if isinstance(obj, (np.integer, np.floating)):
@@ -76,16 +176,34 @@ def _json_safe(obj: Any) -> Any:
         return [_json_safe(v) for v in obj]
     return obj
 
-
 def evaluate_one(
     model: Pipeline,
     X: pd.DataFrame,
     y: pd.Series,
+    pred_out: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    y_pred = model.predict(X)
+    """
+    Evaluate a single fitted classification pipeline on a labeled dataset.
+
+    Args:
+        model: Fitted sklearn Pipeline.
+        X: Evaluation features.
+        y: Evaluation labels.
+        pred_out: Optional precomputed outputs from predict_outputs().
+
+    Returns:
+        Dictionary of metrics and derived outputs.
+    """
+    pred_out = pred_out or predict_outputs(model, X)
+
+    y_pred = pred_out["y_pred"]
+    proba = pred_out["y_proba"]
 
     report_dict = classification_report(
-        y, y_pred, output_dict=True, zero_division=0
+        y,
+        y_pred,
+        output_dict=True,
+        zero_division=0,
     )
     macro_avg = report_dict.get("macro avg", {})
 
@@ -99,9 +217,8 @@ def evaluate_one(
         "y_pred": y_pred,
     }
 
-    if hasattr(model, "predict_proba"):
+    if proba is not None:
         try:
-            proba = model.predict_proba(X)
             if proba.shape[1] == 2:
                 out["roc_auc"] = float(roc_auc_score(y, proba[:, 1]))
             else:
@@ -114,7 +231,21 @@ def evaluate_one(
     return out
 
 
-def get_final_estimator(model: Pipeline):
+
+def get_final_estimator(model: Pipeline) -> Any:
+    """
+    Return the final learned estimator from a pipeline-like object.
+
+    The helper prefers common terminal step names used in this project such as
+    `clf`, `model`, and `classifier`, but will fall back to the final named step
+    when necessary.
+
+    Args:
+        model: sklearn Pipeline or estimator-like object.
+
+    Returns:
+        Final estimator object.
+    """
     if hasattr(model, "named_steps"):
         for step_name in ["clf", "model", "classifier"]:
             if step_name in model.named_steps:
@@ -123,7 +254,14 @@ def get_final_estimator(model: Pipeline):
     return model
 
 
+
 def _safe_name(name: str) -> str:
+    """
+    Convert a display name into a filesystem-safe stem.
+
+    Example:
+        "SVM (RBF)" -> "SVM_RBF"
+    """
     return (
         name.replace(" ", "_")
         .replace("/", "_")
@@ -133,12 +271,22 @@ def _safe_name(name: str) -> str:
     )
 
 
+
 def plot_confusion_matrix(
-    y_true,
-    y_pred,
+    y_true: pd.Series | np.ndarray,
+    y_pred: pd.Series | np.ndarray,
     model_name: str,
     plots_dir: Path,
 ) -> None:
+    """
+    Save a confusion matrix heatmap for one model.
+
+    Args:
+        y_true: Ground-truth labels.
+        y_pred: Predicted labels.
+        model_name: Name used in the chart title and filename.
+        plots_dir: Directory where the plot should be written.
+    """
     cm = confusion_matrix(y_true, y_pred)
 
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -154,10 +302,20 @@ def plot_confusion_matrix(
     plt.close()
 
 
+
 def plot_model_comparison(
     summary_rows: List[Dict[str, Any]],
     plots_dir: Path,
 ) -> None:
+    """
+    Save a grouped bar chart comparing core metrics across models.
+
+    Only metrics present in the provided summary rows are plotted.
+
+    Args:
+        summary_rows: One compact metrics row per model.
+        plots_dir: Directory where the comparison plot should be written.
+    """
     df = pd.DataFrame(summary_rows).copy()
 
     metric_cols = [
@@ -189,6 +347,7 @@ def plot_model_comparison(
     plt.close()
 
 
+
 def plot_feature_importance(
     model: Pipeline,
     feature_names: List[str],
@@ -196,6 +355,23 @@ def plot_feature_importance(
     plots_dir: Path,
     top_n: int = 20,
 ) -> None:
+    """
+    Save a feature-importance plot when the estimator exposes importance data.
+
+    Supported cases:
+    - tree-based estimators exposing `feature_importances_`
+    - linear estimators exposing `coef_`
+
+    For multiclass linear models, the mean absolute coefficient magnitude is
+    used as a simple global importance proxy.
+
+    Args:
+        model: Fitted sklearn Pipeline.
+        feature_names: Names of the input features used during evaluation.
+        model_name: Name used in the plot title and filename.
+        plots_dir: Directory where the plot should be written.
+        top_n: Number of top-ranked features to plot.
+    """
     estimator = get_final_estimator(model)
 
     values = None
@@ -237,12 +413,22 @@ def plot_feature_importance(
     plt.close()
 
 
+
 def save_classification_report(
-    y_true,
-    y_pred,
+    y_true: pd.Series | np.ndarray,
+    y_pred: pd.Series | np.ndarray,
     model_name: str,
     reports_dir: Path,
 ) -> None:
+    """
+    Save a markdown classification report for one model.
+
+    Args:
+        y_true: Ground-truth labels.
+        y_pred: Predicted labels.
+        model_name: Name used in the report title and filename.
+        reports_dir: Directory where the report should be written.
+    """
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     out_path = reports_dir / f"{_safe_name(model_name)}_classification_report.md"
@@ -256,11 +442,28 @@ def save_classification_report(
     out_path.write_text(title + table + "\n", encoding="utf-8")
 
 
+
 def evaluate_models(
     model_paths: List[Path],
     df_eval: pd.DataFrame,
     cfg: EvalConfig,
 ) -> Dict[str, Any]:
+    """
+    Evaluate one or more serialized pipelines on a labeled evaluation dataset.
+
+    Side effects:
+    - writes JSON metrics summary
+    - optionally writes CSV leaderboard
+    - writes plots and markdown reports for each model
+
+    Args:
+        model_paths: Paths to `.joblib` pipeline artifacts.
+        df_eval: Evaluation dataframe containing features and labels.
+        cfg: Evaluation configuration.
+
+    Returns:
+        Nested results dictionary that is also persisted to disk.
+    """
     X, y = split_xy(df_eval, cfg.label_col)
 
     plots_dir = Path(cfg.plots_dir)
@@ -273,6 +476,8 @@ def evaluate_models(
         model = load_pipeline(mp)
         metrics = evaluate_one(model, X, y)
 
+        # `y_pred` is used for report generation but not persisted in the final
+        # JSON payload to keep the artifact smaller and easier to inspect.
         y_pred = metrics.pop("y_pred")
 
         model_result = {
@@ -318,6 +523,7 @@ def evaluate_models(
     return results
 
 
+
 def run_evaluation(
     *,
     data_path: str | Path,
@@ -325,6 +531,19 @@ def run_evaluation(
     model_path: str | Path | None = None,
     models_dir: str | Path = "artifacts/models",
 ) -> Dict[str, Any]:
+    """
+    Entry point for evaluating either a single model or all models in a folder.
+
+    Args:
+        data_path: Path to the evaluation dataset.
+        cfg: Evaluation configuration.
+        model_path: Optional path to one specific model artifact to evaluate.
+            When omitted, all `.joblib` files in `models_dir` are evaluated.
+        models_dir: Directory searched when `model_path` is not supplied.
+
+    Returns:
+        The same nested results payload returned by `evaluate_models`.
+    """
     df_eval = load_df(data_path)
 
     if model_path:
