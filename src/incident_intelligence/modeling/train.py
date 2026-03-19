@@ -1,3 +1,19 @@
+"""
+This module contains the main training loop for baseline model selection using train/validation splits.
+
+The workflow is as follows:
+1. Load train and validation datasets from disk
+2. For each baseline model:
+   a. Tune hyperparameters with GridSearchCV on the train split only
+   b. Evaluate the tuned best estimator on the validation split
+   c. Save the tuned pipeline and record validation metrics
+3. Select the overall best model by validation macro F1 score
+4. Write out a detailed JSON report and a leaderboard CSV summarizing all models' validation performance 
+5. Save the selected best model pipeline to disk
+
+The main entry point is the `main()` function, which can be invoked from the CLI. The core logic is in `train_and_validate()`, 
+which is also callable directly for programmatic use.
+"""
 from __future__ import annotations
 
 import json
@@ -23,16 +39,15 @@ from incident_intelligence.modeling.predict import predict_outputs
 @dataclass(frozen=True)
 class TrainValidateConfig:
     """
-    Configuration for train/validation model selection.
+    Configuration for training and validating baseline models.
 
     Attributes:
-        label_col: Name of the target column in both train and validation datasets.
-        models_out_dir: Directory where each tuned best pipeline is saved.
-        metrics_out_json: Path for the detailed JSON summary of training and validation results.
-        leaderboard_out_csv: Path for the validation leaderboard CSV.
-        best_model_out: Path where the selected best overall model is saved.
+    - label_col: Name of the target label column in the datasets.
+    - models_out_dir: Directory to save trained model pipelines.
+    - metrics_out_json: Path to save detailed training/validation metrics JSON.
+    - leaderboard_out_csv: Path to save summary CSV leaderboard of models.
+    - best_model_out: Path to save the selected best model pipeline.
     """
-
     label_col: str = "root_cause_label"
     models_out_dir: str = "artifacts/models"
     metrics_out_json: str = "artifacts/metrics/train_val_results.json"
@@ -42,10 +57,11 @@ class TrainValidateConfig:
 
 def _safe_model_name(name: str) -> str:
     """
-    Convert a human-readable model name into a filesystem-friendly filename stem.
-
-    Example:
-        "SVM (RBF)" -> "SVM_RBF"
+    Convert a model name into a filesystem-safe filename stem by replacing or removing special characters.
+    This is used to create output filenames for each model, where the filename is derived from the model name but 
+    sanitized to avoid issues with special characters. 
+    
+    For example, "Random Forest (v1)" would become "Random_Forest_v1".
     """
     return (
         str(name)
@@ -59,7 +75,8 @@ def _safe_model_name(name: str) -> str:
 
 def load_df(path: str | Path) -> pd.DataFrame:
     """
-    Load a tabular dataset from CSV or Parquet.
+    Load a dataset from a CSV or Parquet file into a pandas DataFrame.
+    The file type is inferred from the extension. Supported formats are .csv and .parquet/.pq.
 
     Args:
         path: Path to the dataset file.
@@ -83,18 +100,21 @@ def load_df(path: str | Path) -> pd.DataFrame:
 
 def split_xy(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Split a dataframe into features and target.
+    Split a dataframe into features (X) and target labels (y) based on the specified label column.
+    The label column is separated from the features, and both are returned.
 
     Args:
-        df: Input dataframe containing features and the target column.
-        label_col: Name of the target column.
+    - df: Input dataframe containing both features and the target label column.
+    - label_col: Name of the target label column to separate.
 
     Returns:
-        A tuple of (X, y).
+    - X: DataFrame containing the feature columns (all columns except label_col).
+    - y: Series containing the target labels (the label_col).
 
-    Raises:
-        ValueError: If the label column is missing.
+    Raises:    
+    - ValueError: If the specified label_col is not found in the dataframe columns.
     """
+
     if label_col not in df.columns:
         raise ValueError(f"label_col='{label_col}' not found. Columns={list(df.columns)}")
     X = df.drop(columns=[label_col])
@@ -104,12 +124,15 @@ def split_xy(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFrame, pd.Series]
 
 def _json_safe(obj: Any) -> Any:
     """
-    Recursively convert NumPy-heavy structures into JSON-serializable Python objects.
-
-    Handles:
-    - numpy arrays -> lists
-    - numpy scalar types -> Python scalars
-    - nested dicts/lists
+    Recursively convert an object into a JSON-serializable format by converting numpy types to native Python types.
+    This is used to prepare the training/validation results payload for JSON serialization, ensuring that all
+    values are compatible with JSON encoding. For example, numpy arrays are converted to lists, and numpy
+    numeric types are converted to native Python int or float.
+    
+    Args:
+        obj: The object to convert.
+    Returns:
+        A JSON-serializable version of the input object.
     """
     if isinstance(obj, np.ndarray):
         return obj.tolist()

@@ -1,3 +1,15 @@
+"""CLI entrypoint for training and validating baseline incident models.
+
+This module exposes a small command-line interface that:
+1. parses optional file/output overrides,
+2. merges them with the named ``train`` application config,
+3. builds a :class:`TrainValidateConfig`, and
+4. runs the training pipeline before printing a short summary.
+
+The heavy lifting lives in ``incident_intelligence.modeling.train``; this file
+primarily wires CLI arguments into the shared training/configuration helpers.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +26,14 @@ from incident_intelligence.config import (
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the training CLI.
+
+    All arguments are optional so callers can rely on values loaded from the
+    ``train`` configuration section and only override the fields they need.
+
+    Returns:
+        Configured argument parser for the training command.
+    """
     parser = argparse.ArgumentParser(
         description="Train baseline models on train set and evaluate on validation set."
     )
@@ -62,12 +82,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
 def main() -> None:
+    """Parse settings, execute training, and print the best-model summary.
+
+    CLI-provided values take precedence over config-file values via
+    ``merge_cli_args``. The resulting settings are translated into the runtime
+    ``TrainValidateConfig`` expected by ``run_training``.
+    """
     parser = build_parser()
     args = parser.parse_args()
 
+    # Load the named training config and let explicit CLI flags override it.
     settings = merge_cli_args(args, load_config(TrainCLIConfig, "train"))
 
+    # Restrict the downstream config to the fields used by the training runner.
     cfg = TrainValidateConfig(
         label_col=settings.label_col,
         models_out_dir=settings.models_out_dir,
@@ -82,6 +111,8 @@ def main() -> None:
         cfg=cfg,
     )
 
+    # Emit a concise terminal summary for humans while richer artifacts are
+    # written to the configured output paths.
     best = result["best_model"]
     print(
         f"Training complete. Best model: {best['model_name']} "

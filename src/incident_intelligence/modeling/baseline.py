@@ -1,3 +1,18 @@
+"""
+Baseline model training and evaluation module.
+
+This module provides functionality to define, train, and evaluate
+baseline machine learning models for root cause classification.
+
+The main workflow includes:
+1. Defining a set of baseline models and their hyperparameter grids.
+2. Splitting the input dataset into features and target, and creating a train/test split.
+3. Running GridSearchCV to find the best hyperparameters for each model.
+4. Evaluating the best model on the holdout test set and summarizing results.   
+5. Saving the best pipelines to disk for later use.
+
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,18 +36,14 @@ from sklearn.svm import SVC
 class BaselineTrainConfig:
     """
     Configuration for baseline model training and evaluation.
-
     Attributes:
         label_col: Name of the target column in the input dataframe.
-        test_size: Fraction of data reserved for holdout evaluation.
-        random_state: Random seed used for train/test split and model reproducibility
-            where supported.
-        cv: Number of cross-validation folds used by GridSearchCV.
-        n_jobs: Number of parallel jobs for GridSearchCV.
-        verbose: Verbosity level passed to GridSearchCV.
-        scoring: Metric used by GridSearchCV to select the best hyperparameters.
-            If None, GridSearchCV uses the estimator's default score method,
-            which is typically accuracy for classifiers.
+        test_size: Proportion of the dataset to include in the holdout split.
+        random_state: Random seed for reproducibility.
+        cv: Number of cross-validation folds for GridSearchCV.
+        n_jobs: Number of parallel jobs for GridSearchCV (-1 uses all cores).
+        verbose: Verbosity level for GridSearchCV output.
+        scoring: Scoring metric for hyperparameter tuning. If None, uses estimator's default.
     """
 
     label_col: str = "root_cause_label"
@@ -46,10 +57,14 @@ class BaselineTrainConfig:
 
 def _safe_model_name(name: str) -> str:
     """
-    Convert a model display name into a filesystem-friendly stem.
-
+    Sanitize a model name string to be safe for use in filenames.
+    This function replaces spaces and special characters with underscores and removes parentheses. 
+    Args:
+        name: Original model name string.
+    Returns:
+        Sanitized model name string suitable for filenames. 
     Example:
-        "SVM (RBF)" -> "SVM_RBF"
+        "Random Forest (n_estimators=100)" -> "Random_Forest_n_estimators_100"  
     """
     return (
         str(name)
@@ -63,25 +78,35 @@ def _safe_model_name(name: str) -> str:
 
 def needs_scaling(estimator: BaseEstimator) -> bool:
     """
-    Return True when the estimator benefits from feature scaling.
-
-    Currently scaling is applied to:
-    - LogisticRegression
-    - SVC
-
-    Tree-based models are left unscaled.
+    Determine if the given estimator is sensitive to feature scaling.
+    Some models, such as Logistic Regression and SVMs, can benefit from feature scaling,
+    while tree-based models typically do not require it. This function checks the type 
+    of the estimator to decide whether to include a StandardScaler in the training pipeline.
+    Args:
+        estimator: An unfitted scikit-learn estimator instance.
+    
+    Returns: 
+        True if the estimator is sensitive to feature scaling and would benefit from a StandardScaler, 
+        False otherwise.
     """
     return isinstance(estimator, (LogisticRegression, SVC))
 
 
 def get_models_to_run(random_state: int = 42) -> List[Dict[str, Any]]:
     """
-    Return the baseline model definitions and hyperparameter grids.
+    Define the set of baseline models to train along with their hyperparameter grids.
 
-    Each item contains:
-    - name: human-readable model name
-    - estimator: unfitted estimator instance
-    - param_grid: GridSearchCV parameter grid targeting the pipeline's 'clf' step
+    Each model is represented as a dictionary containing:
+        - 'name': A human-readable name for the model.
+        - 'estimator': An unfitted scikit-learn estimator instance.
+        - 'param_grid': A dictionary specifying the hyperparameters to tune using GridSearchCV, 
+           where keys are in the format 'step__param' corresponding to the pipeline step and parameter name.
+
+    Args:
+        random_state: Random seed to ensure reproducibility for models that use randomness.
+
+    Returns:
+        A list of dictionaries, each representing a model and its associated hyperparameter grid for tuning.
     """
     return [
         {
@@ -124,6 +149,11 @@ def make_pipeline(estimator: BaseEstimator) -> Pipeline:
     magnitude. The scaler is configured to emit pandas output so downstream
     steps preserve column names when supported by the installed scikit-learn
     version.
+
+    Args:
+        estimator: An unfitted scikit-learn estimator instance. The type of the estimator is checked to determine if feature scaling is needed. 
+    Returns:
+        A scikit-learn Pipeline object that includes a StandardScaler if the estimator is sensitive to feature scaling, followed by the estimator itself. 
     """
     if needs_scaling(estimator):
         return Pipeline(
@@ -138,6 +168,11 @@ def make_pipeline(estimator: BaseEstimator) -> Pipeline:
 def split_xy(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFrame, pd.Series]:
     """
     Split a dataframe into features and target.
+
+    The function checks if the specified label column exists in the dataframe. If it does, 
+    it separates the features (X) by dropping the label column and extracts the target 
+    variable (y) as a separate series. If the label column is not found, a ValueError is 
+    raised with an informative message.
 
     Args:
         df: Input dataframe containing feature columns and the target column.
@@ -155,7 +190,6 @@ def split_xy(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFrame, pd.Series]
     y = df[label_col]
     return X, y
 
-
 def train_and_evaluate(
     X_train: pd.DataFrame,
     y_train: pd.Series,
@@ -168,11 +202,13 @@ def train_and_evaluate(
     cfg: BaselineTrainConfig,
 ) -> Tuple[GridSearchCV, Dict[str, Any]]:
     """
-    Fit a hyperparameter-tuned pipeline and evaluate it on the holdout split.
-
-    GridSearchCV is used to select the best parameter set according to
-    cfg.scoring. If cfg.scoring is None, the estimator's default score method
-    is used, which is typically accuracy for classifiers.
+    Train a model pipeline with hyperparameter tuning and evaluate on holdout set.
+        This function performs the following steps:
+        1. Initializes a GridSearchCV object with the provided pipeline, hyperparameter grid, and training configuration (such as number of CV folds, parallel jobs, verbosity, and scoring metric).
+        2. Fits the GridSearchCV object on the training data (X_train, y_train) to find the best hyperparameters based on cross-validation performance.
+        3. Uses the best estimator found by GridSearchCV to predict labels on the holdout test set (X_test).    
+        4. Generates a classification report and confusion matrix comparing the predicted labels to the true labels (y_test).
+        5. Compiles an evaluation dictionary containing the model name, best hyperparameters, best CV score, scoring metric used, classification report, and confusion matrix.
 
     Args:
         X_train: Training features.
@@ -187,8 +223,7 @@ def train_and_evaluate(
     Returns:
         A tuple of:
         - fitted GridSearchCV object
-        - evaluation dictionary containing best params, classification report,
-          confusion matrix, and best CV score
+        - evaluation dictionary containing best params, classification report, confusion matrix, and best CV score  
     """
     grid = GridSearchCV(
         estimator=pipeline,

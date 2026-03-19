@@ -1,3 +1,22 @@
+"""
+generator.py
+
+Synthetic incident dataset generator used for training root-cause
+classification models.
+
+This module simulates system incidents by generating metric values
+that resemble production telemetry (CPU, latency, errors, etc.)
+and associating them with a root cause label.
+
+Main responsibilities:
+- Generate synthetic incident metrics
+- Apply root-cause-specific metric perturbations
+- Produce a labeled dataset
+- Split dataset into train/validation/evaluation sets
+- Save datasets to disk
+"""
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,6 +31,8 @@ from sklearn.model_selection import train_test_split
 from incident_intelligence.settings import SETTINGS, load_class_config
 
 
+# Default probability distribution over root cause classes.
+# Used when no external probability distribution is provided.
 DEFAULT_ROOT_CAUSE_PROBS = {
     "bad_deployment": 0.2,
     "external_dependency_failure": 0.2,
@@ -24,16 +45,41 @@ DEFAULT_ROOT_CAUSE_PROBS = {
 
 @dataclass(frozen=True)
 class GeneratorConfig:
+    """
+    Configuration object controlling dataset generation.
+    """
+    # Total number of incidents to generate
     n_samples: int = 4000
+
+    # Random seed for reproducibility
     seed: int = 42
+
+    # Target label column name
     label_col: str = "root_cause_label"
+
+    # Dataset split proportions
     train_size: float = 0.70
     val_size: float = 0.15
+
+    # Output paths
     raw_out: str = "raw/incidents_raw.csv"
     processed_dir: str = "processed"
 
 
 def validate_configs(class_config):
+    """
+    Validate that mixture probabilities for each metric sum to 1.
+
+    Parameters
+    ----------
+    class_config : dict
+        Root cause configuration mapping metrics to mixture distributions.
+
+    Raises
+    ------
+    ValueError
+        If mixture probabilities do not sum to 1.
+    """
     for root_cause, metric_mix in class_config.items():
         for metric, mixture in metric_mix.items():
             total = sum(p for p, _ in mixture)
@@ -44,6 +90,24 @@ def validate_configs(class_config):
 
 
 def apply_mixture(value, config):
+    """
+    Apply a Gaussian mixture perturbation to a metric.
+
+    Each mixture component specifies a probability and
+    a (mean, std) adjustment applied to the base value.
+
+    Parameters
+    ----------
+    value : float
+        Baseline metric value.
+    config : list
+        Mixture components of the form (probability, (mean, std)).
+
+    Returns
+    -------
+    float
+        Adjusted metric value.
+    """
     r = np.random.rand()
     cumulative = 0.0
     for prob, (mean, std) in config:
@@ -54,6 +118,26 @@ def apply_mixture(value, config):
 
 
 def generate_incident(root_cause, class_config):
+    """
+    Generate a synthetic incident instance.
+
+    This simulates realistic relationships between system metrics
+    such as request rate, CPU usage, latency, and error rate.
+
+    Parameters
+    ----------
+    root_cause : str
+        Root cause label for the incident.
+    class_config : dict
+        Configuration defining metric perturbations for each root cause.
+
+    Returns
+    -------
+    dict
+        Generated incident metrics and root cause label.
+    """
+
+    # Baseline system metrics
     metrics = {
         "request_rate": np.random.normal(300, 50),
         "mem_growth": np.random.normal(0.2, 0.1),
@@ -63,13 +147,15 @@ def generate_incident(root_cause, class_config):
         "latency": np.random.normal(200, 50),
         "avg_cpu": np.random.normal(40, 10),
     }
-    print(class_config)
+
     config = class_config[root_cause]
 
+    # Apply root-cause-specific metric perturbations
     for metric, mixture in config.items():
         if metric in metrics:
             metrics[metric] = apply_mixture(metrics[metric], mixture)
 
+    # Introduce relationships between system metrics
     metrics["avg_cpu"] += (0.05 * metrics["request_rate"] + np.random.normal(5, 3))
     metrics["avg_cpu"] = np.clip(metrics["avg_cpu"], 0, 100)
     metrics["mem_growth"] += 0.005 * metrics["avg_cpu"]
@@ -98,9 +184,11 @@ def generate_incident(root_cause, class_config):
     system_stress_score += 2.0 * metrics["error_rate"]
     metrics["error_rate"] += sigmoid(system_stress_score)
 
+    # Simulate log events based on underlying metrics
     oom_logs = np.random.poisson(max(metrics["mem_growth"] * 2, 0.5))
     timeout_logs = np.random.poisson(max(metrics["dependency_latency"] / 100, 1))
 
+    # Ensure all metrics are within realistic bounds
     metrics["request_rate"] = max(metrics["request_rate"], 0)
     metrics["dependency_latency"] = max(metrics["dependency_latency"], 1)
     metrics["mem_growth"] = max(metrics["mem_growth"], 0)
@@ -121,6 +209,25 @@ def generate_incident(root_cause, class_config):
 
 
 def generate_dataset(n_samples, root_cause_probs, class_config, seed=42):
+    """
+    Generate a synthetic dataset of incidents with associated root cause labels.
+
+    Parameters
+    ----------
+    n_samples : int
+        Total number of incident samples to generate.
+    root_cause_probs : dict
+        Probability distribution over root cause classes.
+    class_config : dict
+        Configuration defining metric perturbations for each root cause.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    pd.DataFrame
+        Generated dataset with incident metrics and root cause labels.
+    """
     np.random.seed(seed)
     random.seed(seed)
 
@@ -136,6 +243,23 @@ def generate_dataset(n_samples, root_cause_probs, class_config, seed=42):
 
 
 def stratified_splits(df: pd.DataFrame, label_col: str, seed: int, train_size: float, val_size: float):
+    """
+    Split the dataset into stratified train/validation/evaluation sets. 
+    Ensure root cause class distribution is preserved across splits.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The complete dataset to split.
+    label_col : str
+        The name of the label column to stratify on.
+    seed : int
+        Random seed for reproducibility.
+    train_size : float
+        Proportion of the dataset to include in the train split.
+    val_size : float
+        Proportion of the dataset to include in the validation split.  The remainder will be used for evaluation.
+    """
     eval_size = 1.0 - train_size - val_size
     if eval_size <= 0:
         raise ValueError("train_size + val_size must be < 1.0")
@@ -163,11 +287,27 @@ def generate_and_save_datasets(
     cfg: GeneratorConfig,
     root_cause_probs: Dict[str, float] | None = None,
 ) -> Dict[str, Any]:
+    """
+    Generate synthetic incident datasets and save to disk.
+
+    Parameters
+    ----------
+    cfg : GeneratorConfig
+        Configuration for dataset generation.
+    root_cause_probs : dict, optional
+        Probability distribution over root cause classes. If None, defaults will be used.
+
+    Returns
+    -------
+    dict
+        Paths to the generated datasets and their sizes.
+    """
     root_cause_probs = root_cause_probs or DEFAULT_ROOT_CAUSE_PROBS
 
     class_config = load_class_config()
     validate_configs(class_config)
 
+    # Generate the full dataset
     df = generate_dataset(
         cfg.n_samples,
         root_cause_probs,
@@ -175,10 +315,12 @@ def generate_and_save_datasets(
         seed=cfg.seed,
     )
 
+    # Save the raw generated dataset
     raw_path = SETTINGS.data_dir / cfg.raw_out
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(raw_path, index=False)
 
+    # Create stratified dataset splits
     train_df, val_df, eval_df = stratified_splits(
         df,
         label_col=cfg.label_col,
@@ -194,6 +336,7 @@ def generate_and_save_datasets(
     val_path = processed_dir / "incident_root_cause_val.csv"
     eval_path = processed_dir / "incident_root_cause_eval.csv"
 
+    # Save datasets to disk
     train_df.to_csv(train_path, index=False)
     val_df.to_csv(val_path, index=False)
     eval_df.to_csv(eval_path, index=False)

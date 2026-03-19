@@ -1,3 +1,14 @@
+"""
+explain.py
+
+CLI for generating global explainability artifacts for trained models.
+
+Produces model-level explanations such as:
+- SHAP feature importance
+- permutation importance
+- summary plots
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -17,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate explainability artifacts for trained models."
     )
-
+    
     parser.add_argument("--data", type=str, default=None, help="Evaluation dataset")
     parser.add_argument("--label-col", type=str, default=None)
     parser.add_argument("--models-dir", type=str, default=None)

@@ -1,15 +1,16 @@
 """
-Shared utilities for global and local model explainability.
+Shared utilities for global and local model explainability.      
+It is not intended to be used directly by end users, but rather to support 
+    - global explainability workflow in ``explain.py`` 
+    - local explainability workflow in ``explain_local.py``. 
 
-This module centralizes the common helpers used by both global explanation
-workflows and row-level local explanation workflows. It handles:
-
-- SHAP import / availability detection
-- output directory creation
-- model loading
-- pipeline estimator/transformer extraction
-- feature transformation for explanation-time inputs
-- SHAP explainer creation and multiclass output normalization
+It handles:
+    - SHAP import / availability detection
+    - output directory creation
+    - model loading
+    - pipeline estimator/transformer extraction
+    - feature transformation for explanation-time inputs
+    - SHAP explainer creation and multiclass output normalization
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ except Exception:
     _HAS_SHAP = False
 
 
+"""Matplotlib global style settings for SHAP plots."""
 plt.rcParams.update(
     {
         "figure.figsize": (10, 6),
@@ -42,8 +44,12 @@ plt.rcParams.update(
 )
 
 
+
 def ensure_dir(path: str | Path) -> Path:
-    """Create a directory if needed and return it as a ``Path``."""
+    """
+    Create a directory if needed and return it as a ``Path``.
+    This is used to create output directories for explainability artifacts.
+    """
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -51,7 +57,10 @@ def ensure_dir(path: str | Path) -> Path:
 
 
 def _safe_name(name: str) -> str:
-    """Convert a display name into a filesystem-safe filename stem."""
+    """
+    Convert a display name into a filesystem-safe filename stem.
+    Removes spaces, slashes, backslashes, and parentheses.
+    """
     return (
         str(name)
         .replace(" ", "_")
@@ -64,14 +73,19 @@ def _safe_name(name: str) -> str:
 
 
 def model_output_dir(cfg: Any, model_name: str) -> Path:
-    """Return the output directory for one explained model."""
+    """
+    Return the output directory for the model, creating it if needed.
+    The directory name is derived from the sanitized model name.
+    """
     base = Path(cfg.out_dir)
     return ensure_dir(base / _safe_name(model_name))
 
 
 
 def load_model(path: str | Path) -> Any:
-    """Load a serialized model artifact from disk."""
+    """
+    Load a fitted model from a .joblib file.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Model not found: {path}")
@@ -81,11 +95,17 @@ def load_model(path: str | Path) -> Any:
 
 def transform_X(transformer: Any, X: pd.DataFrame) -> pd.DataFrame:
     """
-    Transform an input feature frame using a fitted preprocessing step.
-
-    When no transformer is present, the original dataframe is returned.
-    When a non-dataframe output is returned, it is converted back into a
-    dataframe using the original column names and index.
+    Apply feature transformations at explanation time to match the training pipeline.
+    Returns the original dataframe if no transformer is provided.
+    
+    Parameters
+    ----------
+    transformer: Fitted transformer or None
+    X: Input dataframe to transform
+    
+    Returns
+    -------
+    Transformed dataframe matching the model's feature space
     """
     if transformer is None:
         return X
@@ -101,12 +121,21 @@ def transform_X(transformer: Any, X: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_multiclass_shap(shap_vals: Any, n_classes: int) -> List[np.ndarray]:
     """
-    Normalize SHAP outputs into a list of per-class arrays.
-
-    SHAP may return values as:
-    - a list of arrays (already normalized)
-    - a 2D array for binary classification
-    - a 3D array for multiclass classification
+    Normalize SHAP output into a consistent list of 2D arrays (one per class).
+    
+    Handles different SHAP formats:
+    - List of arrays: returned as-is
+    - 2D array (binary): returns [array, -array]
+    - 3D array (multiclass): splits along class dimension
+    
+    Parameters
+    ----------
+    shap_vals: Raw SHAP values (list, 2D, or 3D array)
+    n_classes: Number of classes
+    
+    Returns
+    -------
+    List of 2D arrays, one per class with shape (n_samples, n_features)
     """
     if isinstance(shap_vals, list):
         return shap_vals
@@ -127,10 +156,10 @@ def normalize_multiclass_shap(shap_vals: Any, n_classes: int) -> List[np.ndarray
 
 def get_estimator_and_transformer(model: Any) -> Tuple[ClassifierMixin, Any]:
     """
-    Split a pipeline-like model into final estimator and upstream transformer.
-
-    The transformer is assumed to be the second-to-last step when the model is
-    an sklearn ``Pipeline`` with multiple steps.
+    Extract the final estimator and preceding transformer from a model pipeline.
+    
+    For pipelines, returns the final step as the estimator and earlier steps as transformer.
+    For non-pipeline models, returns the model as estimator with None for transformer.
     """
     if isinstance(model, Pipeline):
         clf = model.steps[-1][1]
@@ -146,13 +175,19 @@ def make_explainer(
     cfg: Any,
 ) -> Tuple[Any, str]:
     """
-    Build the most appropriate SHAP explainer for a fitted classifier.
+    Create the most appropriate SHAP explainer for a classifier.
 
-    Returns a tuple of ``(explainer, kind)`` where ``kind`` is one of:
-    - ``tree``
-    - ``linear``
-    - ``kernel``
-    - ``none``
+    Parameters
+    ----------
+    clf: The fitted classifier to explain (e.g., RandomForestClassifier, LogisticRegression, etc.)
+    X_bg: Background dataset for SHAP (used for KernelExplainer)
+    cfg: Configuration object containing settings like kernel_bg and random_state   
+    
+    Returns
+    -------
+    A tuple of (explainer, kind) where 
+        explainer is the created SHAP explainer object (or None if creation failed) 
+        kind is a string indicating the type of explainer created ("tree", "linear", "kernel", or "none").
     """
     if not _HAS_SHAP:
         return None, "none"

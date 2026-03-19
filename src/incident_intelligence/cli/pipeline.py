@@ -1,3 +1,17 @@
+"""
+pipeline.py
+
+End-to-end pipeline orchestrator for the incident intelligence project.
+
+Pipeline stages:
+1. Generate synthetic dataset
+2. Train models
+3. Evaluate trained models
+4. Produce explainability artifacts
+
+This script is useful for running the full ML workflow in sequence.
+"""
+
 from __future__ import annotations
 
 from incident_intelligence.config import (
@@ -29,7 +43,9 @@ from incident_intelligence.modeling.train import (
 def main() -> None:
     print("Running pipeline...\n")
 
-    # Generate
+    # --------------------------------------------------
+    # Generate synthetic dataset
+    # --------------------------------------------------
     gen_settings = load_config(GeneratorCLIConfig, "generator")
     gen_cfg = GeneratorConfig(
         n_samples=gen_settings.n_samples,
@@ -48,7 +64,9 @@ def main() -> None:
     print(f"[generate] val:   {gen_result['val_path']}")
     print(f"[generate] eval:  {gen_result['eval_path']}")
 
-    # Train
+    # --------------------------------------------------
+    # Train models using generated dataset
+    # --------------------------------------------------
     train_settings = load_config(TrainCLIConfig, "train")
     train_cfg = TrainValidateConfig(
         label_col=train_settings.label_col,
@@ -67,7 +85,9 @@ def main() -> None:
     print(f"[train] best model: {train_result['best_model']['model_name']}")
     print(f"[train] best model path: {train_result['best_model']['model_path']}")
 
-    # Evaluate
+    # --------------------------------------------------
+    # Evaluate trained models
+    # --------------------------------------------------
     eval_settings = load_config(EvaluateCLIConfig, "evaluate")
     eval_cfg = EvalConfig(
         label_col=eval_settings.label_col,
@@ -84,7 +104,9 @@ def main() -> None:
 
     print(f"[evaluate] evaluated {len(eval_result['models'])} model(s)")
 
-    # Explain
+    # --------------------------------------------------
+    # Generate explainability artifacts
+    # --------------------------------------------------
     explain_settings = load_config(ExplainCLIConfig, "explain")
     explain_cfg = ExplainConfig(
         label_col=explain_settings.label_col,

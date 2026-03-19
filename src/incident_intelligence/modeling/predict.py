@@ -1,3 +1,7 @@
+"""
+Module for generating predictions from a fitted model pipeline.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -11,16 +15,21 @@ def predict_outputs(
     X: pd.DataFrame,
 ) -> Dict[str, Any]:
     """
-    Run inference for a fitted classification pipeline.
+    Generate predictions and predicted probabilities (if supported) from a fitted model.
 
-    Args:
-        model: Fitted sklearn Pipeline.
-        X: Feature dataframe.
+    Parameters
+    ----------
+    model : Pipeline
+        A fitted sklearn Pipeline or estimator that supports predict and optionally predict_proba.
+    X : pd.DataFrame
+        Input features for generating predictions. Should have the same columns used during training.
 
-    Returns:
-        Dictionary containing:
+    Returns
+    -------
+    Dict[str, Any]
+        A dictionary containing:
             y_pred: predicted class labels
-            y_proba: predicted class probabilities if available
+            y_proba: predicted class probabilities if available, otherwise None
     """
 
     y_pred = model.predict(X)

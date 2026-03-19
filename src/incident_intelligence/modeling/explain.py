@@ -35,18 +35,38 @@ from incident_intelligence.modeling.explain_utils import (
 
 @dataclass
 class ExplainConfig:
-    """Configuration for global explainability generation."""
-
+    """
+    Configuration for global explainability generation.
+    This includes parameters for SHAP explainers, permutation importance, and output settings.
+    Users can override these settings via CLI arguments or by modifying the default values here.
+    """
+    
+    # Column name in the data containing labels/targets
     label_col: str = "root_cause_label"
-    out_dir: str | Path = "artifacts/explain"
-    background_n: int = 100
-    explain_n: int = 200
-    kernel_bg: int = 40
-    kernel_nsamples: int = 80
-    perm_repeats: int = 10
-    random_state: int = 42
-    top_k: int = 20
 
+    # Output directory where explainability artifacts will be saved
+    out_dir: str | Path = "artifacts/explain"
+
+    # Number of samples to use for SHAP background dataset
+    background_n: int = 100
+
+    # Number of samples to use for SHAP explanation dataset
+    explain_n: int = 200
+
+    # Number of background samples for kernel explainer
+    kernel_bg: int = 40
+
+    # Number of samples for kernel explainer SHAP value computation
+    kernel_nsamples: int = 80
+
+    # Number of permutations for permutation importance calculation
+    perm_repeats: int = 10
+
+    # Random seed for reproducibility
+    random_state: int = 42
+
+    # Number of top features to include in output summary
+    top_k: int = 20
 
 
 def save_shap_summary_plot(
@@ -56,7 +76,22 @@ def save_shap_summary_plot(
     model_name: str,
     cfg: ExplainConfig,
 ) -> Path | None:
-    """Save a SHAP summary bar plot for one model."""
+    """
+    Save a SHAP summary plot for one model. Returns the path to the saved plot.
+    The plot is a bar chart of mean absolute SHAP values for the top features.
+
+    Parameters
+    ----------
+    shap_list: List of SHAP value arrays (one per class)
+    X_ex: DataFrame of samples used for explanation (after transformation)
+    classes: List of class labels (if available)
+    model_name: Name of the model being explained
+    cfg: ExplainConfig with output settings
+    
+    Returns
+    -------
+    Path to the saved SHAP summary plot, or None if SHAP is unavailable
+    """
     if not _HAS_SHAP:
         return None
 
@@ -83,7 +118,20 @@ def save_permutation_plot(
     model_name: str,
     cfg: ExplainConfig,
 ) -> Path:
-    """Save a global permutation-importance bar chart for one model."""
+    """
+    Save a permutation importance plot for one model. Returns the path to the saved plot.
+    The plot is a bar chart of mean permutation importance scores for the top features.
+
+    Parameters
+    ----------
+    importance: Series of feature importance scores indexed by feature name
+    model_name: Name of the model being explained
+    cfg: ExplainConfig with output settings
+    
+    Returns
+    -------
+    Path to the saved permutation importance plot
+    """
     out_dir = ensure_dir(model_output_dir(cfg, model_name) / "global")
     png_path = out_dir / "importance.png"
 
@@ -108,9 +156,21 @@ def global_importance_for_model(
 ) -> pd.Series:
     """
     Compute global feature importance for a single fitted model.
-
     SHAP is attempted first. If SHAP is unavailable or fails, permutation
-    importance is used instead.
+    importance is used instead. The resulting importance scores are saved as CSV 
+    and plotted, with paths returned in the output summary.
+    
+    Parameters
+    ----------
+    model_name: Name of the model (used for labeling outputs)
+    model: Fitted model pipeline (e.g. sklearn Pipeline) to explain
+    X: DataFrame of input features (after any necessary transformations)
+    y: Series of target labels corresponding to X
+    cfg: ExplainConfig with settings for SHAP and permutation importance
+    
+    Returns
+    -------
+    Series of feature importance scores indexed by feature name, sorted descending
     """
     rng = np.random.RandomState(cfg.random_state)
 
@@ -188,7 +248,22 @@ def explain_models(
     y: pd.Series,
     cfg: ExplainConfig,
 ) -> Dict[str, Any]:
-    """Generate global explainability artifacts for one or more model files."""
+    """
+    Generate global explainability artifacts for a list of models. Returns a summary dictionary with paths to artifacts.
+    For each model, global feature importance is computed using SHAP (if available) or permutation importance (as a fallback). 
+    The importance scores are saved as CSV and plotted, with paths included in the summary dictionary.
+
+    Parameters
+    ----------
+    model_paths: List of file paths to the saved .joblib models to explain
+    X: DataFrame of input features for the evaluation dataset
+    y: Series of target labels corresponding to X
+    cfg: ExplainConfig with settings for explainability generation
+
+    Returns
+    -------
+    Dictionary containing a list of explained models with paths to their artifacts and a summary JSON path
+    """
     root_out_dir = ensure_dir(cfg.out_dir)
     summary: Dict[str, Any] = {"models": []}
 
@@ -242,7 +317,24 @@ def run_explainability(
     models_dir: str | Path = "artifacts/models",
     model_path: str | Path | None = None,
 ) -> Dict[str, Any]:
-    """Load labeled data and generate global explanation artifacts."""
+    """
+    Main entry point for generating explainability artifacts for one or more models.
+    Loads the evaluation dataset, identifies models to explain (either a single model or all models in
+    a directory), and generates global feature importance explanations for each model using SHAP or permutation importance.
+    The resulting artifacts (importance scores, plots) are saved to disk, and a summary dictionary
+    with paths to the artifacts is returned.
+
+    Parameters
+    ----------
+    data_path: File path to the evaluation dataset (CSV) containing features and labels
+    cfg: ExplainConfig with settings for explainability generation
+    models_dir: Directory containing .joblib model files to explain (ignored if model_path is provided)
+    model_path: Optional file path to a single .joblib model to explain (overrides models_dir if provided)
+
+    Returns
+    -------
+    Dictionary containing a list of explained models with paths to their artifacts and a summary JSON path
+    """
     data_path = Path(data_path)
     models_dir = Path(models_dir)
     cfg.out_dir = ensure_dir(cfg.out_dir)

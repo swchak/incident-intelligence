@@ -1,3 +1,10 @@
+"""
+Settings management for the incident intelligence project.
+
+This module defines a Settings dataclass that loads project-wide configuration such as directory paths. 
+It also includes utility functions for loading JSON configuration files.
+"""
+
 from __future__ import annotations
 
 import json
@@ -13,6 +20,10 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+"""
+Settings dataclass for project-wide configuration. This includes paths to 
+key directories like data, models, and generator specifications.
+"""
 @dataclass(frozen=True)
 class Settings:
     project_root: Path

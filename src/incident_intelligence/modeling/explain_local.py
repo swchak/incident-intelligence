@@ -35,7 +35,18 @@ from incident_intelligence.modeling.explain_utils import (
 
 @dataclass
 class ExplainLocalConfig:
-    """Configuration for row-level local explainability generation."""
+    """
+    Configuration for row-level local explainability generation.
+
+    Attributes:
+        label_col: Target column expected in the evaluation dataframe.
+        out_dir: Directory where local explanation artifacts are written.
+        background_n: Number of background samples for SHAP explainer.
+        kernel_bg: Number of background samples for kernel SHAP.
+        kernel_nsamples: Number of samples for kernel SHAP.
+        random_state: Random seed for reproducibility.
+        top_k: Number of top features to display in plots.
+    """
     label_col: str = "root_cause_label"
     out_dir: str | Path = "artifacts/explain"
     background_n: int = 100
@@ -53,7 +64,23 @@ def save_local_waterfall_plot(
     class_name: Any,
     cfg: ExplainLocalConfig,
 ) -> Path | None:
-    """Save a SHAP waterfall plot for one row and one class."""
+    """
+    Generate and save a SHAP waterfall plot for one row and class. Return the path to the saved plot, 
+    or None if SHAP is not available.
+
+    Parameters    
+    ----------
+    explanation: SHAP Explanation object containing values and feature names.
+    model_name: Name of the model (used for output organization).
+    row_index: Index of the row being explained.
+    class_name: Name of the class for which the explanation is generated.
+    cfg: ExplainLocalConfig with plot configuration. 
+    
+    Returns
+    -------
+    Path | None
+        Path to the saved waterfall plot PNG, or None if SHAP is not available.
+     """
     if not _HAS_SHAP:
         return None
 
@@ -75,7 +102,23 @@ def save_local_json(
     row_index: int,
     cfg: ExplainLocalConfig,
 ) -> Path:
-    """Persist one local explanation payload as JSON."""
+    """
+    Persist one local explanation payload as a JSON file. The payload should contain all 
+    relevant information about the explanation, such as feature contributions, predicted and true labels, etc. 
+    The JSON file is saved under a directory structure organized by model name and row index.   
+
+    Parameters
+    ----------
+    payload: Dictionary containing explanation details for one row.
+    model_name: Name of the model (used for output organization).
+    row_index: Index of the row being explained.
+    cfg: ExplainLocalConfig with output configuration.
+
+    Returns
+    -------
+    Path
+        Path to the saved JSON file containing the local explanation.
+    """
     out_dir = ensure_dir(model_output_dir(cfg, model_name) / "local")
     json_path = out_dir / f"row_{row_index}.json"
     json_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
@@ -89,7 +132,23 @@ def save_local_markdown(
     row_index: int,
     cfg: ExplainLocalConfig,
 ) -> Path:
-    """Persist one local explanation payload as a markdown report."""
+    """
+    Persist one local explanation payload as a markdown report. The report includes details such as 
+    feature contributions, predicted and true labels, and any associated plots. The markdown file 
+    is saved under a directory structure organized by model name and row index.
+
+    Parameters
+    ----------
+    payload: Dictionary containing explanation details for one row.
+    model_name: Name of the model (used for output organization).
+    row_index: Index of the row being explained.
+    cfg: ExplainLocalConfig with output configuration.
+
+    Returns
+    -------
+    Path
+        Path to the saved markdown file containing the local explanation report.
+    """
     out_dir = ensure_dir(model_output_dir(cfg, model_name) / "local")
     md_path = out_dir / f"row_{row_index}.md"
 
@@ -131,7 +190,24 @@ def run_local_explainability(
     top_k_classes: int = 3,
     top_features_per_class: int = 8,
 ) -> Dict[str, Any]:
-    """Generate local SHAP explanations for selected rows from one fitted model."""
+    """
+    Generate local SHAP explanations for selected rows from one fitted model.
+
+    Parameters
+    ----------
+    data_path: Path to the dataset.
+    cfg: ExplainLocalConfig with output configuration.
+    model_path: Path to the fitted model.
+    row_indices: List of row indices to explain. If None, random rows are selected.
+    n_examples: Number of examples to explain if row_indices is None.
+    top_k_classes: Number of top classes to include in the explanation.
+    top_features_per_class: Number of top features per class to include in the explanation.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Dictionary containing local explanations for the selected rows.
+    """
     df = load_df(data_path)
     if cfg.label_col not in df.columns:
         raise KeyError(f"Label column '{cfg.label_col}' not found in {data_path}")
@@ -290,4 +366,3 @@ def run_local_explainability(
         "model": model_name,
         "out_dir": str(cfg.out_dir),
     }
-

@@ -1,3 +1,16 @@
+"""
+explain_local.py
+
+CLI for generating local explainability artifacts using SHAP.
+
+Local explanations describe why a model produced a specific prediction
+for individual data rows. Outputs include:
+
+- SHAP waterfall plots
+- JSON explanation artifacts
+- Markdown RCA-style summaries
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -15,15 +28,26 @@ from incident_intelligence.modeling.explain_local import (
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    Build CLI parser for local explainability.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+    """
     parser = argparse.ArgumentParser(
         description="Generate local explainability artifacts for selected evaluation examples."
     )
+
+     # Evaluation dataset
     parser.add_argument(
         "--data",
         type=str,
         default=None,
         help="Path to evaluation CSV/Parquet including label column",
     )
+
+    # Model to explain
     parser.add_argument(
         "--model",
         type=str,
@@ -42,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Base directory for explainability artifacts",
     )
+
+     # SHAP configuration
     parser.add_argument(
         "--background-n",
         type=int,
@@ -113,6 +139,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """
+    Run local explainability generation.
+    """
+
     parser = build_parser()
     args = parser.parse_args()
 
