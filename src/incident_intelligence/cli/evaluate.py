@@ -20,7 +20,9 @@ from incident_intelligence.config import EvaluateCLIConfig, load_config, merge_c
 from incident_intelligence.modeling.evaluate import (
     EvalConfig,
     run_evaluation,
+    run_evaluation_for_dataset_kind,
 )
+from incident_intelligence.modeling.train import with_dataset_suffix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,6 +85,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to save evaluation summary CSV",
     )
+    parser.add_argument(
+        "--dataset-kind",
+        choices=["snapshot", "temporal"],
+        default="snapshot",
+        help="Use the standard processed eval dataset and dataset-specific artifact paths",
+    )
 
     return parser
 
@@ -103,24 +111,61 @@ def main() -> None:
 
     parser = build_parser()
     args = parser.parse_args()
+    dataset_kind = args.dataset_kind
 
     # Load base config and merge CLI overrides
     settings = merge_cli_args(args, load_config(EvaluateCLIConfig, "evaluate"))
 
+    metrics_out = settings.metrics_out or (
+        "artifacts/metrics/evaluation.json"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/metrics/evaluation.json", dataset_kind)
+    )
+    summary_csv_out = settings.summary_csv_out or (
+        "artifacts/metrics/evaluation_summary.csv"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/metrics/evaluation_summary.csv", dataset_kind)
+    )
+    plots_dir = (
+        "artifacts/plots"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/plots", dataset_kind)
+    )
+    reports_dir = (
+        "artifacts/reports"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/reports", dataset_kind)
+    )
+    models_dir = settings.models_dir or (
+        "artifacts/models"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/models", dataset_kind)
+    )
+
     # Build evaluation configuration
     cfg = EvalConfig(
         label_col=settings.label_col,
-        metrics_out=settings.metrics_out,
-        summary_csv_out=settings.summary_csv_out,
+        metrics_out=metrics_out,
+        summary_csv_out=summary_csv_out,
+        plots_dir=plots_dir,
+        reports_dir=reports_dir,
     )
 
     # Run evaluation pipeline
-    results = run_evaluation(
-        data_path=settings.data,
-        cfg=cfg,
-        model_path=settings.model,
-        models_dir=settings.models_dir,
-    )
+    if args.data is None:
+        results = run_evaluation_for_dataset_kind(
+            dataset_kind=dataset_kind,
+            cfg=cfg,
+            model_path=settings.model,
+            models_dir=models_dir,
+        )
+    else:
+        results = run_evaluation(
+            data_path=settings.data,
+            cfg=cfg,
+            model_path=settings.model,
+            models_dir=models_dir,
+        )
 
     # Identify best model by accuracy
     best = None

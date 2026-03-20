@@ -344,7 +344,10 @@ def run_explainability(
         raise KeyError(f"Label column '{cfg.label_col}' not found in {data_path}")
 
     y = df[cfg.label_col]
-    X = df.drop(columns=[cfg.label_col])
+    drop_cols = [cfg.label_col]
+    if "incident_id" in df.columns:
+        drop_cols.append("incident_id")
+    X = df.drop(columns=drop_cols)
 
     if model_path:
         model_paths = [Path(model_path)]
@@ -360,4 +363,33 @@ def run_explainability(
         X=X,
         y=y,
         cfg=cfg,
+    )
+
+
+def run_explainability_for_dataset_kind(
+    *,
+    dataset_kind: str,
+    cfg: ExplainConfig,
+    model_path: str | Path | None = None,
+    models_dir: str | Path = "artifacts/models",
+) -> Dict[str, Any]:
+    """
+    Generate explainability artifacts using the standard processed evaluation
+    dataset for the requested dataset family.
+    """
+    if dataset_kind == "snapshot":
+        data_path = Path("data/processed/incident_snapshot_eval.csv")
+    elif dataset_kind == "temporal":
+        data_path = Path("data/processed/incident_temporal_eval.csv")
+    else:
+        raise ValueError(
+            f"Unsupported dataset_kind='{dataset_kind}'. "
+            "Expected one of: ['snapshot', 'temporal']"
+        )
+
+    return run_explainability(
+        data_path=data_path,
+        cfg=cfg,
+        models_dir=models_dir,
+        model_path=model_path,
     )

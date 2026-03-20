@@ -136,7 +136,11 @@ def find_model_files(models_dir: str | Path) -> List[Path]:
 
 
 
-def split_xy(df: pd.DataFrame, label_col: str) -> tuple[pd.DataFrame, pd.Series]:
+def split_xy(
+    df: pd.DataFrame,
+    label_col: str,
+    drop_cols: Optional[List[str]] = None,
+) -> tuple[pd.DataFrame, pd.Series]:
     """
     Split a dataframe into features and target.
 
@@ -152,9 +156,28 @@ def split_xy(df: pd.DataFrame, label_col: str) -> tuple[pd.DataFrame, pd.Series]
     """
     if label_col not in df.columns:
         raise ValueError(f"label_col='{label_col}' not found. Columns={list(df.columns)}")
-    X = df.drop(columns=[label_col])
+    drop_cols = drop_cols or []
+    cols_to_drop = [label_col] + [c for c in drop_cols if c in df.columns]
+    X = df.drop(columns=cols_to_drop)
     y = df[label_col]
     return X, y
+
+
+def load_eval_data(dataset_kind: str = "snapshot") -> pd.DataFrame:
+    """
+    Load the standard processed evaluation dataset for a given dataset kind.
+    """
+    if dataset_kind == "snapshot":
+        eval_path = "data/processed/incident_snapshot_eval.csv"
+    elif dataset_kind == "temporal":
+        eval_path = "data/processed/incident_temporal_eval.csv"
+    else:
+        raise ValueError(
+            f"Unsupported dataset_kind='{dataset_kind}'. "
+            "Expected one of: ['snapshot', 'temporal']"
+        )
+
+    return load_df(eval_path)
 
 
 
@@ -464,7 +487,7 @@ def evaluate_models(
     Returns:
         Nested results dictionary that is also persisted to disk.
     """
-    X, y = split_xy(df_eval, cfg.label_col)
+    X, y = split_xy(df_eval, cfg.label_col, drop_cols=["incident_id"])
 
     plots_dir = Path(cfg.plots_dir)
     reports_dir = Path(cfg.reports_dir)
@@ -545,6 +568,27 @@ def run_evaluation(
         The same nested results payload returned by `evaluate_models`.
     """
     df_eval = load_df(data_path)
+
+    if model_path:
+        model_paths = [Path(model_path)]
+    else:
+        model_paths = find_model_files(models_dir)
+
+    return evaluate_models(model_paths, df_eval, cfg)
+
+
+def run_evaluation_for_dataset_kind(
+    *,
+    dataset_kind: str,
+    cfg: EvalConfig,
+    model_path: str | Path | None = None,
+    models_dir: str | Path = "artifacts/models",
+) -> Dict[str, Any]:
+    """
+    Evaluate one or more models against the standard processed dataset for the
+    requested dataset family.
+    """
+    df_eval = load_eval_data(dataset_kind=dataset_kind)
 
     if model_path:
         model_paths = [Path(model_path)]

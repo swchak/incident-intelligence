@@ -21,7 +21,9 @@ from incident_intelligence.config import (
 from incident_intelligence.modeling.explain import (
     ExplainConfig,
     run_explainability,
+    run_explainability_for_dataset_kind,
 )
+from incident_intelligence.modeling.train import with_dataset_suffix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--perm-repeats", type=int, default=None)
     parser.add_argument("--random-state", type=int, default=None)
     parser.add_argument("--top-k", type=int, default=None)
+    parser.add_argument(
+        "--dataset-kind",
+        choices=["snapshot", "temporal"],
+        default="snapshot",
+        help="Use the standard processed eval dataset and dataset-specific artifact paths",
+    )
 
     return parser
 
@@ -53,12 +61,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    dataset_kind = args.dataset_kind
 
     settings = merge_cli_args(args, load_config(ExplainCLIConfig, "explain"))
 
+    out_dir = settings.out_dir or (
+        "artifacts/explain"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/explain", dataset_kind)
+    )
+    models_dir = settings.models_dir or (
+        "artifacts/models"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/models", dataset_kind)
+    )
+
     cfg = ExplainConfig(
         label_col=settings.label_col,
-        out_dir=settings.out_dir,
+        out_dir=out_dir,
         background_n=settings.background_n,
         explain_n=settings.explain_n,
         kernel_bg=settings.kernel_bg,
@@ -68,18 +88,19 @@ def main() -> None:
         top_k=settings.top_k,
     )
 
-    if settings.model:
-        results = run_explainability(
-            data_path=settings.data,
+    if args.data is None:
+        results = run_explainability_for_dataset_kind(
+            dataset_kind=dataset_kind,
             cfg=cfg,
             model_path=settings.model,
-            models_dir=settings.models_dir,
+            models_dir=models_dir,
         )
     else:
         results = run_explainability(
             data_path=settings.data,
             cfg=cfg,
-            models_dir=settings.models_dir,
+            model_path=settings.model,
+            models_dir=models_dir,
         )
 
     print(f"Generated explainability for {len(results['models'])} model(s).")

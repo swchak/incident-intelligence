@@ -15,7 +15,9 @@ The expected usage pattern in CLI scripts is:
     5. Use the resulting configuration object to run the desired workflow.
 
 The configuration sections currently defined are:
-    - generator: For synthetic dataset generation settings.
+    - generator: For synthetic snapshot dataset generation settings.
+    - sequence_generator: For synthetic incident sequence generation settings.
+    - temporal_features: For temporal feature-building settings.
     - train: For model training settings.
     - evaluate: For model evaluation settings.
     - explain: For model explainability settings.
@@ -136,6 +138,24 @@ class GeneratorCLIConfig:
     val_size: float = 0.15
     label_col: str = "root_cause_label"
 
+@dataclass
+class SequenceGeneratorCLIConfig:
+    """
+    Configuration schema for the incident sequence generation CLI.
+    """
+    n_incidents: int = 5000
+    sequence_length: int = 20
+    random_seed: int = 42
+    output: str = "data/raw/incidents_sequence_raw.csv"
+
+
+@dataclass
+class TemporalFeaturesCLIConfig:
+    """
+    Configuration schema for the temporal feature-building CLI.
+    """
+    input: str = "data/raw/incidents_sequence_raw.csv"
+    output_dir: str = "data/processed"
 
 @dataclass
 class TrainCLIConfig:
@@ -158,7 +178,7 @@ class EvaluateCLIConfig:
     Configuration schema for the evaluation CLI. All fields have defaults that can be overridden 
     by CLI arguments or pyproject.toml settings.
     """
-    data: str = "data/processed/incident_root_cause_eval.csv"
+    data: str = "data/processed/incident_snapshot_eval.csv"
     label_col: str = "root_cause_label"
     models_dir: str = "artifacts/models"
     model: str | None = None
@@ -172,7 +192,7 @@ class ExplainCLIConfig:
     Configuration schema for the explanation CLI. All fields have defaults that can be overridden 
     by CLI arguments or pyproject.toml settings.
     """
-    data: str = "data/processed/incident_root_cause_eval.csv"
+    data: str = "data/processed/incident_snapshot_eval.csv"
     label_col: str = "root_cause_label"
     models_dir: str = "artifacts/models"
     model: str | None = None
@@ -192,7 +212,7 @@ class ExplainLocalCLIConfig:
     Configuration schema for the local explanation CLI. All fields have defaults that can be overridden 
     by CLI arguments or pyproject.toml settings.
     """
-    data: str = "data/processed/incident_root_cause_eval.csv"
+    data: str = "data/processed/incident_snapshot_eval.csv"
     label_col: str = "root_cause_label"
     out_dir: str = "artifacts/explain"
     background_n: int = 100
@@ -216,6 +236,8 @@ strongly-typed dataclass instance, which can then be merged with CLI arguments f
 """
 CONFIG_SECTIONS: dict[str, type] = {
     "generator": GeneratorCLIConfig,
+    "sequence_generator": SequenceGeneratorCLIConfig,
+    "temporal_features": TemporalFeaturesCLIConfig,
     "train": TrainCLIConfig,
     "evaluate": EvaluateCLIConfig,
     "explain": ExplainCLIConfig,
@@ -236,7 +258,7 @@ def load_named_config(
 
     Returns:    
         An instance of the dataclass corresponding to the specified section, populated with the configuration values from pyproject.toml.
-        
+
     Raises:
         ValueError: If the specified section is not found in the CONFIG_SECTIONS registry.
     """

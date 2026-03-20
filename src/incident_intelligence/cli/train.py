@@ -17,6 +17,8 @@ import argparse
 from incident_intelligence.modeling.train import (
     TrainValidateConfig,
     run_training,
+    run_training_for_dataset_kind,
+    with_dataset_suffix,
 )
 from incident_intelligence.config import (
     TrainCLIConfig,
@@ -79,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to save the selected best model",
     )
+    parser.add_argument(
+    "--dataset-kind",
+    choices=["snapshot", "temporal"],
+    default="snapshot",
+)
     return parser
 
 
@@ -92,22 +99,47 @@ def main() -> None:
     """
     parser = build_parser()
     args = parser.parse_args()
+    dataset_kind = args.dataset_kind
 
     # Load the named training config and let explicit CLI flags override it.
     settings = merge_cli_args(args, load_config(TrainCLIConfig, "train"))
 
-    # Restrict the downstream config to the fields used by the training runner.
+
     cfg = TrainValidateConfig(
-        label_col=settings.label_col,
-        models_out_dir=settings.models_out_dir,
-        metrics_out_json=settings.metrics_out_json,
-        leaderboard_out_csv=settings.leaderboard_out_csv,
-        best_model_out=settings.best_model_out,
+        label_col=settings.label_col or "root_cause_label",
+        models_out_dir=(
+            settings.models_out_dir
+            or (
+                "artifacts/models"
+                if dataset_kind == "snapshot"
+                else with_dataset_suffix("artifacts/models", dataset_kind)
+            )
+        ),
+        metrics_out_json=(
+            settings.metrics_out_json
+            or with_dataset_suffix(
+                "artifacts/metrics/train_val_results.json",
+                dataset_kind,
+            )
+        ),
+        leaderboard_out_csv=(
+            settings.leaderboard_out_csv
+            or with_dataset_suffix(
+                "artifacts/metrics/leaderboard_val.csv",
+                dataset_kind,
+            )
+        ),
+        best_model_out=(
+            settings.best_model_out
+            or with_dataset_suffix(
+                "artifacts/models/best_model.joblib",
+                dataset_kind,
+            )
+        ),
     )
 
-    result = run_training(
-        train_path=settings.train,
-        val_path=settings.val,
+    result = run_training_for_dataset_kind(
+        dataset_kind=dataset_kind,
         cfg=cfg,
     )
 

@@ -3,49 +3,76 @@ pipeline.py
 
 End-to-end pipeline orchestrator for the incident intelligence project.
 
-Pipeline stages:
-1. Generate synthetic dataset
-2. Train models
-3. Evaluate trained models
-4. Produce explainability artifacts
-
-This script is useful for running the full ML workflow in sequence.
+Supported workflows:
+1. snapshot: synthetic snapshot dataset -> train -> evaluate -> explain
+2. temporal: sequence generation -> temporal features -> train -> evaluate -> explain
 """
 
 from __future__ import annotations
+
+import argparse
+from pathlib import Path
 
 from incident_intelligence.config import (
     EvaluateCLIConfig,
     ExplainCLIConfig,
     GeneratorCLIConfig,
+    SequenceGeneratorCLIConfig,
+    TemporalFeaturesCLIConfig,
     TrainCLIConfig,
     load_config,
 )
-from incident_intelligence.data.generator import (
+from incident_intelligence.data.generate_sequence import generate_sequence_dataset
+from incident_intelligence.data.generate_snapshot import (
     GeneratorConfig,
     generate_and_save_datasets,
 )
+from incident_intelligence.data.splitters import split_by_incident
+from incident_intelligence.data.temporal_features import build_temporal_feature_dataset
 from incident_intelligence.modeling.evaluate import (
     EvalConfig,
     run_evaluation,
+    run_evaluation_for_dataset_kind,
 )
 from incident_intelligence.modeling.explain import (
     ExplainConfig,
     run_explainability,
+    run_explainability_for_dataset_kind,
 )
-
 from incident_intelligence.modeling.train import (
     TrainValidateConfig,
     run_training,
+    run_training_for_dataset_kind,
+    with_dataset_suffix,
 )
 
 
-def main() -> None:
-    print("Running pipeline...\n")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the end-to-end incident intelligence pipeline."
+    )
+    parser.add_argument(
+        "--dataset-kind",
+        choices=["snapshot", "temporal"],
+        default="snapshot",
+        help="Run the snapshot workflow or the sequence->temporal workflow",
+    )
+    return parser
 
-    # --------------------------------------------------
-    # Generate synthetic dataset
-    # --------------------------------------------------
+
+def _models_dir_for_dataset_kind(base_models_dir: str, dataset_kind: str) -> str:
+    if dataset_kind == "snapshot":
+        return base_models_dir
+    return with_dataset_suffix(base_models_dir, dataset_kind)
+
+
+def _path_for_dataset_kind(path_str: str, dataset_kind: str) -> str:
+    if dataset_kind == "snapshot":
+        return path_str
+    return with_dataset_suffix(path_str, dataset_kind)
+
+
+def _run_snapshot_generation() -> None:
     gen_settings = load_config(GeneratorCLIConfig, "generator")
     gen_cfg = GeneratorConfig(
         n_samples=gen_settings.n_samples,
@@ -64,53 +91,140 @@ def main() -> None:
     print(f"[generate] val:   {gen_result['val_path']}")
     print(f"[generate] eval:  {gen_result['eval_path']}")
 
-    # --------------------------------------------------
-    # Train models using generated dataset
-    # --------------------------------------------------
+
+def _run_temporal_generation() -> None:
+    seq_settings = load_config(SequenceGeneratorCLIConfig, "sequence_generator")
+    temporal_settings = load_config(TemporalFeaturesCLIConfig, "temporal_features")
+
+    seq_df = generate_sequence_dataset(
+        n_incidents=seq_settings.n_incidents,
+        sequence_length=seq_settings.sequence_length,
+        random_seed=seq_settings.random_seed,
+    )
+
+    sequence_output = Path(seq_settings.output)
+    sequence_output.parent.mkdir(parents=True, exist_ok=True)
+    seq_df.to_csv(sequence_output, index=False)
+
+    feature_df = build_temporal_feature_dataset(seq_df)
+    train_df, val_df, eval_df = split_by_incident(feature_df)
+
+    output_dir = Path(temporal_settings.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    temporal_all_path = output_dir / "incident_temporal_all.csv"
+    temporal_train_path = output_dir / "incident_temporal_train.csv"
+    temporal_val_path = output_dir / "incident_temporal_val.csv"
+    temporal_eval_path = output_dir / "incident_temporal_eval.csv"
+
+    feature_df.to_csv(temporal_all_path, index=False)
+    train_df.to_csv(temporal_train_path, index=False)
+    val_df.to_csv(temporal_val_path, index=False)
+    eval_df.to_csv(temporal_eval_path, index=False)
+
+    print(f"[sequence] raw:   {sequence_output}")
+    print(f"[temporal] all:   {temporal_all_path}")
+    print(f"[temporal] train: {temporal_train_path}")
+    print(f"[temporal] val:   {temporal_val_path}")
+    print(f"[temporal] eval:  {temporal_eval_path}")
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    dataset_kind = args.dataset_kind
+
+    print("Running pipeline...\n")
+
+    if dataset_kind == "snapshot":
+        _run_snapshot_generation()
+    else:
+        _run_temporal_generation()
+
     train_settings = load_config(TrainCLIConfig, "train")
     train_cfg = TrainValidateConfig(
         label_col=train_settings.label_col,
-        models_out_dir=train_settings.models_out_dir,
-        metrics_out_json=train_settings.metrics_out_json,
-        leaderboard_out_csv=train_settings.leaderboard_out_csv,
-        best_model_out=train_settings.best_model_out,
+        models_out_dir=_models_dir_for_dataset_kind(
+            train_settings.models_out_dir,
+            dataset_kind,
+        ),
+        metrics_out_json=_path_for_dataset_kind(
+            train_settings.metrics_out_json,
+            dataset_kind,
+        ),
+        leaderboard_out_csv=_path_for_dataset_kind(
+            train_settings.leaderboard_out_csv,
+            dataset_kind,
+        ),
+        best_model_out=_path_for_dataset_kind(
+            train_settings.best_model_out,
+            dataset_kind,
+        ),
     )
 
-    train_result = run_training(
-        train_path=train_settings.train,
-        val_path=train_settings.val,
-        cfg=train_cfg,
-    )
+    if dataset_kind == "snapshot":
+        train_result = run_training(
+            train_path="data/processed/incident_snapshot_train.csv",
+            val_path="data/processed/incident_snapshot_val.csv",
+            cfg=train_cfg,
+        )
+    else:
+        train_result = run_training_for_dataset_kind(
+            dataset_kind=dataset_kind,
+            cfg=train_cfg,
+        )
 
     print(f"[train] best model: {train_result['best_model']['model_name']}")
     print(f"[train] best model path: {train_result['best_model']['model_path']}")
 
-    # --------------------------------------------------
-    # Evaluate trained models
-    # --------------------------------------------------
     eval_settings = load_config(EvaluateCLIConfig, "evaluate")
     eval_cfg = EvalConfig(
         label_col=eval_settings.label_col,
-        metrics_out=eval_settings.metrics_out,
-        summary_csv_out=eval_settings.summary_csv_out,
+        metrics_out=_path_for_dataset_kind(eval_settings.metrics_out, dataset_kind),
+        summary_csv_out=_path_for_dataset_kind(
+            eval_settings.summary_csv_out,
+            dataset_kind,
+        ),
+        plots_dir=(
+            "artifacts/plots"
+            if dataset_kind == "snapshot"
+            else with_dataset_suffix("artifacts/plots", dataset_kind)
+        ),
+        reports_dir=(
+            "artifacts/reports"
+            if dataset_kind == "snapshot"
+            else with_dataset_suffix("artifacts/reports", dataset_kind)
+        ),
     )
 
-    eval_result = run_evaluation(
-        data_path=eval_settings.data,
-        cfg=eval_cfg,
-        model_path=eval_settings.model,
-        models_dir=eval_settings.models_dir,
+    eval_models_dir = _models_dir_for_dataset_kind(
+        eval_settings.models_dir,
+        dataset_kind,
     )
+    if dataset_kind == "snapshot":
+        eval_result = run_evaluation(
+            data_path="data/processed/incident_snapshot_eval.csv",
+            cfg=eval_cfg,
+            model_path=eval_settings.model,
+            models_dir=eval_models_dir,
+        )
+    else:
+        eval_result = run_evaluation_for_dataset_kind(
+            dataset_kind=dataset_kind,
+            cfg=eval_cfg,
+            model_path=eval_settings.model,
+            models_dir=eval_models_dir,
+        )
 
     print(f"[evaluate] evaluated {len(eval_result['models'])} model(s)")
 
-    # --------------------------------------------------
-    # Generate explainability artifacts
-    # --------------------------------------------------
     explain_settings = load_config(ExplainCLIConfig, "explain")
     explain_cfg = ExplainConfig(
         label_col=explain_settings.label_col,
-        out_dir=explain_settings.out_dir,
+        out_dir=(
+            explain_settings.out_dir
+            if dataset_kind == "snapshot"
+            else with_dataset_suffix(explain_settings.out_dir, dataset_kind)
+        ),
         background_n=explain_settings.background_n,
         explain_n=explain_settings.explain_n,
         kernel_bg=explain_settings.kernel_bg,
@@ -120,16 +234,27 @@ def main() -> None:
         top_k=explain_settings.top_k,
     )
 
-    explain_result = run_explainability(
-        data_path=explain_settings.data,
-        cfg=explain_cfg,
-        model_path=explain_settings.model,
-        models_dir=explain_settings.models_dir,
+    explain_models_dir = _models_dir_for_dataset_kind(
+        explain_settings.models_dir,
+        dataset_kind,
     )
+    if dataset_kind == "snapshot":
+        explain_result = run_explainability(
+            data_path="data/processed/incident_snapshot_eval.csv",
+            cfg=explain_cfg,
+            model_path=explain_settings.model,
+            models_dir=explain_models_dir,
+        )
+    else:
+        explain_result = run_explainability_for_dataset_kind(
+            dataset_kind=dataset_kind,
+            cfg=explain_cfg,
+            model_path=explain_settings.model,
+            models_dir=explain_models_dir,
+        )
 
     print(f"[explain] generated artifacts for {len(explain_result['models'])} model(s)")
     print(f"[explain] out dir: {explain_result['out_dir']}")
-
     print("\nPipeline complete.")
 
 
