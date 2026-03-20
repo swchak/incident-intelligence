@@ -71,6 +71,21 @@ def with_dataset_suffix(path_str: str, dataset_kind: str) -> str:
     path = Path(path_str)
     return str(path.with_name(f"{path.stem}_{dataset_kind}{path.suffix}"))
 
+
+def with_parent_dir_suffix(path_str: str, dataset_kind: str) -> str:
+    """
+    Append dataset kind to the parent directory of a path while preserving the
+    original filename.
+
+    Example:
+        artifacts/metrics/train_val_results.json
+        -> artifacts/metrics_temporal/train_val_results.json
+    """
+    path = Path(path_str)
+    parent = path.parent
+    suffixed_parent = parent.with_name(f"{parent.name}_{dataset_kind}")
+    return str(suffixed_parent / path.name)
+
 def _safe_model_name(name: str) -> str:
     """
     Convert a model name into a filesystem-safe filename stem by replacing or removing special characters.

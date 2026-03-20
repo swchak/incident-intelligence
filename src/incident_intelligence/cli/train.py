@@ -18,6 +18,7 @@ from incident_intelligence.modeling.train import (
     TrainValidateConfig,
     run_training,
     run_training_for_dataset_kind,
+    with_parent_dir_suffix,
     with_dataset_suffix,
 )
 from incident_intelligence.config import (
@@ -156,21 +157,21 @@ def main() -> None:
         ),
         metrics_out_json=(
             args.metrics_out_json
-            or with_dataset_suffix(
+            or with_parent_dir_suffix(
                 "artifacts/metrics/train_val_results.json",
                 dataset_kind,
             )
         ),
         leaderboard_out_csv=(
             args.leaderboard_out_csv
-            or with_dataset_suffix(
+            or with_parent_dir_suffix(
                 "artifacts/metrics/leaderboard_val.csv",
                 dataset_kind,
             )
         ),
         best_model_out=(
             args.best_model_out
-            or with_dataset_suffix(
+            or with_parent_dir_suffix(
                 "artifacts/models/best_model.joblib",
                 dataset_kind,
             )

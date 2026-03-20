@@ -43,6 +43,7 @@ from incident_intelligence.modeling.train import (
     TrainValidateConfig,
     run_training,
     run_training_for_dataset_kind,
+    with_parent_dir_suffix,
     with_dataset_suffix,
 )
 
@@ -105,6 +106,12 @@ def _path_for_dataset_kind(path_str: str, dataset_kind: str) -> str:
     if dataset_kind == "snapshot":
         return path_str
     return with_dataset_suffix(path_str, dataset_kind)
+
+
+def _path_in_dataset_dir(path_str: str, dataset_kind: str) -> str:
+    if dataset_kind == "snapshot":
+        return path_str
+    return with_parent_dir_suffix(path_str, dataset_kind)
 
 
 def _run_snapshot_generation() -> None:
@@ -187,15 +194,15 @@ def main() -> None:
             train_settings.models_out_dir,
             dataset_kind,
         ),
-        metrics_out_json=_path_for_dataset_kind(
+        metrics_out_json=_path_in_dataset_dir(
             train_settings.metrics_out_json,
             dataset_kind,
         ),
-        leaderboard_out_csv=_path_for_dataset_kind(
+        leaderboard_out_csv=_path_in_dataset_dir(
             train_settings.leaderboard_out_csv,
             dataset_kind,
         ),
-        best_model_out=_path_for_dataset_kind(
+        best_model_out=_path_in_dataset_dir(
             train_settings.best_model_out,
             dataset_kind,
         ),
@@ -225,8 +232,8 @@ def main() -> None:
     eval_settings = load_config(EvaluateCLIConfig, "evaluate")
     eval_cfg = EvalConfig(
         label_col=eval_settings.label_col,
-        metrics_out=_path_for_dataset_kind(eval_settings.metrics_out, dataset_kind),
-        summary_csv_out=_path_for_dataset_kind(
+        metrics_out=_path_in_dataset_dir(eval_settings.metrics_out, dataset_kind),
+        summary_csv_out=_path_in_dataset_dir(
             eval_settings.summary_csv_out,
             dataset_kind,
         ),

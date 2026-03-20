@@ -26,7 +26,7 @@ from incident_intelligence.modeling.explain_local import (
     run_local_explainability,
     run_local_explainability_for_dataset_kind,
 )
-from incident_intelligence.modeling.train import with_dataset_suffix
+from incident_intelligence.modeling.train import with_dataset_suffix, with_parent_dir_suffix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -165,7 +165,7 @@ def main() -> None:
     model_path = args.model or (
         "artifacts/models/best_model.joblib"
         if dataset_kind == "snapshot"
-        else with_dataset_suffix("artifacts/models/best_model.joblib", dataset_kind)
+        else with_parent_dir_suffix("artifacts/models/best_model.joblib", dataset_kind)
     )
 
     cfg = ExplainLocalConfig(

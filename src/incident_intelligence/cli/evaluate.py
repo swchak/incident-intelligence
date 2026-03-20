@@ -22,7 +22,7 @@ from incident_intelligence.modeling.evaluate import (
     run_evaluation,
     run_evaluation_for_dataset_kind,
 )
-from incident_intelligence.modeling.train import with_dataset_suffix
+from incident_intelligence.modeling.train import with_dataset_suffix, with_parent_dir_suffix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -119,12 +119,12 @@ def main() -> None:
     metrics_out = args.metrics_out or (
         "artifacts/metrics/evaluation.json"
         if dataset_kind == "snapshot"
-        else with_dataset_suffix("artifacts/metrics/evaluation.json", dataset_kind)
+        else with_parent_dir_suffix("artifacts/metrics/evaluation.json", dataset_kind)
     )
     summary_csv_out = args.summary_csv_out or (
         "artifacts/metrics/evaluation_summary.csv"
         if dataset_kind == "snapshot"
-        else with_dataset_suffix("artifacts/metrics/evaluation_summary.csv", dataset_kind)
+        else with_parent_dir_suffix("artifacts/metrics/evaluation_summary.csv", dataset_kind)
     )
     plots_dir = (
         "artifacts/plots"
