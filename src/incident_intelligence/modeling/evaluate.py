@@ -580,6 +580,7 @@ def run_evaluation(
     cfg: EvalConfig,
     model_path: str | Path | None = None,
     models_dir: str | Path = "artifacts/models",
+    model_paths: List[str | Path] | None = None,
 ) -> Dict[str, Any]:
     """
     Entry point for evaluating either a single model or all models in a folder.
@@ -590,13 +591,18 @@ def run_evaluation(
         model_path: Optional path to one specific model artifact to evaluate.
             When omitted, all `.joblib` files in `models_dir` are evaluated.
         models_dir: Directory searched when `model_path` is not supplied.
+        model_paths: Optional explicit list of model artifact paths to evaluate.
+            When provided, this takes precedence over both `model_path` and
+            directory scanning.
 
     Returns:
         The same nested results payload returned by `evaluate_models`.
     """
     df_eval = load_df(data_path)
 
-    if model_path:
+    if model_paths:
+        model_paths = [Path(path) for path in model_paths]
+    elif model_path:
         model_paths = [Path(model_path)]
     else:
         model_paths = find_model_files(models_dir)
@@ -610,6 +616,7 @@ def run_evaluation_for_dataset_kind(
     cfg: EvalConfig,
     model_path: str | Path | None = None,
     models_dir: str | Path = "artifacts/models",
+    model_paths: List[str | Path] | None = None,
 ) -> Dict[str, Any]:
     """
     Evaluate one or more models against the standard processed dataset for the
@@ -617,7 +624,9 @@ def run_evaluation_for_dataset_kind(
     """
     df_eval = load_eval_data(dataset_kind=dataset_kind)
 
-    if model_path:
+    if model_paths:
+        model_paths = [Path(path) for path in model_paths]
+    elif model_path:
         model_paths = [Path(model_path)]
     else:
         model_paths = find_model_files(models_dir, dataset_kind=dataset_kind)

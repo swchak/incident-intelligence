@@ -114,6 +114,22 @@ def _path_in_dataset_dir(path_str: str, dataset_kind: str) -> str:
     return with_parent_dir_suffix(path_str, dataset_kind)
 
 
+def _model_paths_from_training_result(train_result: dict) -> list[str]:
+    model_paths = [m["model_path"] for m in train_result.get("all_models", [])]
+    best_model_path = train_result.get("best_model", {}).get("model_path")
+    if best_model_path:
+        model_paths.append(best_model_path)
+
+    # Preserve order while removing duplicates.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in model_paths:
+        if path not in seen:
+            seen.add(path)
+            deduped.append(path)
+    return deduped
+
+
 def _run_snapshot_generation() -> None:
     gen_settings = load_config(GeneratorCLIConfig, "generator")
     gen_cfg = GeneratorConfig(
@@ -228,6 +244,7 @@ def main() -> None:
 
     print(f"[train] best model: {train_result['best_model']['model_name']}")
     print(f"[train] best model path: {train_result['best_model']['model_path']}")
+    trained_model_paths = _model_paths_from_training_result(train_result)
 
     eval_settings = load_config(EvaluateCLIConfig, "evaluate")
     eval_cfg = EvalConfig(
@@ -259,6 +276,7 @@ def main() -> None:
             cfg=eval_cfg,
             model_path=eval_settings.model,
             models_dir=eval_models_dir,
+            model_paths=None if eval_settings.model else trained_model_paths,
         )
     else:
         eval_result = run_evaluation_for_dataset_kind(
@@ -266,6 +284,7 @@ def main() -> None:
             cfg=eval_cfg,
             model_path=eval_settings.model,
             models_dir=eval_models_dir,
+            model_paths=None if eval_settings.model else trained_model_paths,
         )
 
     print(f"[evaluate] evaluated {len(eval_result['models'])} model(s)")
@@ -297,6 +316,7 @@ def main() -> None:
             cfg=explain_cfg,
             model_path=explain_settings.model,
             models_dir=explain_models_dir,
+            model_paths=None if explain_settings.model else trained_model_paths,
         )
     else:
         explain_result = run_explainability_for_dataset_kind(
@@ -304,6 +324,7 @@ def main() -> None:
             cfg=explain_cfg,
             model_path=explain_settings.model,
             models_dir=explain_models_dir,
+            model_paths=None if explain_settings.model else trained_model_paths,
         )
 
     print(f"[explain] generated artifacts for {len(explain_result['models'])} model(s)")

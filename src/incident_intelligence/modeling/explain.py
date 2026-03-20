@@ -318,6 +318,7 @@ def run_explainability(
     models_dir: str | Path = "artifacts/models",
     model_path: str | Path | None = None,
     dataset_kind: str | None = None,
+    model_paths: List[str | Path] | None = None,
 ) -> Dict[str, Any]:
     """
     Main entry point for generating explainability artifacts for one or more models.
@@ -351,7 +352,9 @@ def run_explainability(
         drop_cols.append("incident_id")
     X = df.drop(columns=drop_cols)
 
-    if model_path:
+    if model_paths:
+        model_paths = [Path(path) for path in model_paths]
+    elif model_path:
         model_paths = [Path(model_path)]
         if not model_paths[0].exists():
             raise FileNotFoundError(f"Model not found: {model_paths[0]}")
@@ -374,6 +377,7 @@ def run_explainability_for_dataset_kind(
     cfg: ExplainConfig,
     model_path: str | Path | None = None,
     models_dir: str | Path = "artifacts/models",
+    model_paths: List[str | Path] | None = None,
 ) -> Dict[str, Any]:
     """
     Generate explainability artifacts using the standard processed evaluation
@@ -395,4 +399,5 @@ def run_explainability_for_dataset_kind(
         models_dir=models_dir,
         model_path=model_path,
         dataset_kind=dataset_kind,
+        model_paths=model_paths,
     )
