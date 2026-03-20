@@ -171,6 +171,8 @@ make pipeline-temporal
 make pipeline-temporal-fast
 ```
 
+Snapshot is the default Makefile workflow, so `make pipeline` runs the snapshot pipeline and `make pipeline-temporal` runs the temporal one.
+
 ## Training Controls
 
 Training supports configurable search behavior through [src/incident_intelligence/cli/train.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/cli/train.py) and [src/incident_intelligence/cli/pipeline.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/cli/pipeline.py).
@@ -339,6 +341,8 @@ make pipeline
 make pipeline-temporal
 make pipeline-temporal-fast
 ```
+
+`make pipeline` is the snapshot equivalent of `incident-pipeline`, while `make pipeline-temporal` is the Makefile entrypoint for `incident-pipeline --dataset-kind temporal`.
 
 The temporal fast target uses a lighter training configuration by default:
 
