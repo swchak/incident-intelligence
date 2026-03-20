@@ -163,13 +163,19 @@ class TrainCLIConfig:
     Configuration schema for the training CLI. All fields have defaults that can be overridden by 
     CLI arguments or pyproject.toml settings.
     """
-    train: str = "data/processed/incident_root_cause_train.csv"
-    val: str = "data/processed/incident_root_cause_val.csv"
+    train: str = "data/processed/incident_snapshot_train.csv"
+    val: str = "data/processed/incident_snapshot_val.csv"
     label_col: str = "root_cause_label"
     models_out_dir: str = "artifacts/models"
     metrics_out_json: str = "artifacts/metrics/train_val_results.json"
     leaderboard_out_csv: str = "artifacts/metrics/leaderboard_val.csv"
     best_model_out: str = "artifacts/models/best_model.joblib"
+    cv: int = 5
+    n_jobs: int = -1
+    verbose: int = 1
+    scoring: str = "f1_macro"
+    models: tuple[str, ...] | None = None
+    fast_mode: bool = False
 
 
 @dataclass

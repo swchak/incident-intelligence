@@ -82,6 +82,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to save the selected best model",
     )
     parser.add_argument(
+        "--cv",
+        type=int,
+        default=None,
+        help="Number of cross-validation folds for GridSearchCV",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        help="Parallel jobs for GridSearchCV (-1 uses all cores)",
+    )
+    parser.add_argument(
+        "--verbose",
+        type=int,
+        default=None,
+        help="Verbosity for GridSearchCV",
+    )
+    parser.add_argument(
+        "--scoring",
+        type=str,
+        default=None,
+        help="Scoring metric for model selection during GridSearchCV",
+    )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default=None,
+        help="Comma-separated model aliases, e.g. logistic,rf,gb,svm",
+    )
+    parser.add_argument(
+        "--fast-mode",
+        action="store_true",
+        help="Use smaller grids intended for faster iteration",
+    )
+    parser.add_argument(
     "--dataset-kind",
     choices=["snapshot", "temporal"],
     default="snapshot",
@@ -100,6 +135,10 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     dataset_kind = args.dataset_kind
+    if args.models is not None:
+        args.models = tuple(
+            part.strip() for part in args.models.split(",") if part.strip()
+        )
 
     # Load the named training config and let explicit CLI flags override it.
     settings = merge_cli_args(args, load_config(TrainCLIConfig, "train"))
@@ -108,7 +147,7 @@ def main() -> None:
     cfg = TrainValidateConfig(
         label_col=settings.label_col or "root_cause_label",
         models_out_dir=(
-            settings.models_out_dir
+            args.models_out_dir
             or (
                 "artifacts/models"
                 if dataset_kind == "snapshot"
@@ -116,26 +155,32 @@ def main() -> None:
             )
         ),
         metrics_out_json=(
-            settings.metrics_out_json
+            args.metrics_out_json
             or with_dataset_suffix(
                 "artifacts/metrics/train_val_results.json",
                 dataset_kind,
             )
         ),
         leaderboard_out_csv=(
-            settings.leaderboard_out_csv
+            args.leaderboard_out_csv
             or with_dataset_suffix(
                 "artifacts/metrics/leaderboard_val.csv",
                 dataset_kind,
             )
         ),
         best_model_out=(
-            settings.best_model_out
+            args.best_model_out
             or with_dataset_suffix(
                 "artifacts/models/best_model.joblib",
                 dataset_kind,
             )
         ),
+        cv=settings.cv,
+        n_jobs=settings.n_jobs,
+        verbose=settings.verbose,
+        scoring=settings.scoring,
+        models=settings.models,
+        fast_mode=settings.fast_mode,
     )
 
     result = run_training_for_dataset_kind(

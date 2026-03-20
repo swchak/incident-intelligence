@@ -17,6 +17,7 @@ which is also callable directly for programmatic use.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -52,6 +53,12 @@ class TrainValidateConfig:
     metrics_out_json: str = "artifacts/metrics/train_val_results.json"
     leaderboard_out_csv: str = "artifacts/metrics/leaderboard_val.csv"
     best_model_out: str = "artifacts/models/best_model.joblib"
+    cv: int = 5
+    n_jobs: int = -1
+    verbose: int = 1
+    scoring: str = "f1_macro"
+    models: tuple[str, ...] | None = None
+    fast_mode: bool = False
 
 def with_dataset_suffix(path_str: str, dataset_kind: str) -> str:
     """
@@ -290,7 +297,15 @@ def train_and_validate(
         A payload containing the selected best model and all per-model validation results.
     """
     NON_FEATURE_COLUMNS = ["incident_id"]
-    base_cfg = base_cfg or BaselineTrainConfig(label_col=cfg.label_col)
+    base_cfg = base_cfg or BaselineTrainConfig(
+        label_col=cfg.label_col,
+        cv=cfg.cv,
+        n_jobs=cfg.n_jobs,
+        verbose=cfg.verbose,
+        scoring=cfg.scoring,
+        selected_models=cfg.models,
+        fast_mode=cfg.fast_mode,
+    )
 
     X_train, y_train = split_xy(train_df, cfg.label_col, drop_cols=NON_FEATURE_COLUMNS)
     X_val, y_val = split_xy(val_df, cfg.label_col, drop_cols=NON_FEATURE_COLUMNS)
@@ -300,10 +315,15 @@ def train_and_validate(
 
     results: List[Dict[str, Any]] = []
 
-    for model_info in get_models_to_run(base_cfg.random_state):
+    for model_info in get_models_to_run(
+        base_cfg.random_state,
+        selected_models=base_cfg.selected_models,
+        fast_mode=base_cfg.fast_mode,
+    ):
         name = model_info["name"]
         est = model_info["estimator"]
         param_grid = model_info["param_grid"]
+        started_at = time.perf_counter()
 
         grid = fit_grid(
             X_train,
@@ -326,6 +346,7 @@ def train_and_validate(
 
         metrics["val_accuracy"] = metrics["accuracy"]
         metrics["val_f1_macro"] = metrics["f1_macro"]
+        metrics["fit_seconds"] = float(time.perf_counter() - started_at)
 
         model_file = models_out_dir / f"{_safe_model_name(name)}_pipeline.joblib"
         save_pipeline(best_pipe, model_file)
@@ -337,6 +358,7 @@ def train_and_validate(
                 "best_params": grid.best_params_,
                 "best_cv_score": float(grid.best_score_),
                 "cv_scoring": base_cfg.scoring or "estimator_default_score",
+                "fit_seconds": metrics["fit_seconds"],
                 "val_metrics": metrics,
             }
         )
@@ -373,6 +395,7 @@ def train_and_validate(
             "model_path": r["model_path"],
             "val_accuracy": r["val_metrics"].get("val_accuracy"),
             "val_f1_macro": r["val_metrics"].get("val_f1_macro"),
+            "fit_seconds": r.get("fit_seconds"),
         }
         for r in results
     ]

@@ -53,6 +53,23 @@ class BaselineTrainConfig:
     n_jobs: int = -1
     verbose: int = 1
     scoring: str = "f1_macro"
+    selected_models: tuple[str, ...] | None = None
+    fast_mode: bool = False
+
+
+MODEL_ALIASES: dict[str, str] = {
+    "logistic": "Logistic Regression",
+    "logreg": "Logistic Regression",
+    "lr": "Logistic Regression",
+    "random_forest": "Random Forest",
+    "rf": "Random Forest",
+    "forest": "Random Forest",
+    "gradient_boosting": "Gradient Boosting",
+    "gb": "Gradient Boosting",
+    "gbm": "Gradient Boosting",
+    "svm": "SVM (RBF)",
+    "svc": "SVM (RBF)",
+}
 
 
 def _safe_model_name(name: str) -> str:
@@ -92,7 +109,30 @@ def needs_scaling(estimator: BaseEstimator) -> bool:
     return isinstance(estimator, (LogisticRegression, SVC))
 
 
-def get_models_to_run(random_state: int = 42) -> List[Dict[str, Any]]:
+def resolve_selected_models(selected_models: tuple[str, ...] | None) -> set[str] | None:
+    """Normalize CLI/config model aliases into canonical model names."""
+    if not selected_models:
+        return None
+
+    resolved: set[str] = set()
+    for name in selected_models:
+        key = name.strip().lower()
+        if not key:
+            continue
+        canonical = MODEL_ALIASES.get(key)
+        if canonical is None:
+            valid = ", ".join(sorted(MODEL_ALIASES))
+            raise ValueError(f"Unknown model '{name}'. Valid model aliases: {valid}")
+        resolved.add(canonical)
+    return resolved or None
+
+
+def get_models_to_run(
+    random_state: int = 42,
+    *,
+    selected_models: tuple[str, ...] | None = None,
+    fast_mode: bool = False,
+) -> List[Dict[str, Any]]:
     """
     Define the set of baseline models to train along with their hyperparameter grids.
 
@@ -108,37 +148,44 @@ def get_models_to_run(random_state: int = 42) -> List[Dict[str, Any]]:
     Returns:
         A list of dictionaries, each representing a model and its associated hyperparameter grid for tuning.
     """
-    return [
+    models = [
         {
             "name": "Logistic Regression",
             "estimator": LogisticRegression(max_iter=1000, solver="lbfgs"),
-            "param_grid": {"clf__C": [0.01, 0.1, 1, 10]},
+            "param_grid": {
+                "clf__C": [0.1, 1.0] if fast_mode else [0.01, 0.1, 1, 10],
+            },
         },
         {
             "name": "Random Forest",
             "estimator": RandomForestClassifier(random_state=random_state),
             "param_grid": {
-                "clf__n_estimators": [100, 200],
-                "clf__max_depth": [None, 10, 20],
+                "clf__n_estimators": [100] if fast_mode else [100, 200],
+                "clf__max_depth": [10, None] if fast_mode else [None, 10, 20],
             },
         },
         {
             "name": "Gradient Boosting",
             "estimator": GradientBoostingClassifier(random_state=random_state),
             "param_grid": {
-                "clf__n_estimators": [100, 200],
-                "clf__learning_rate": [0.05, 0.1],
+                "clf__n_estimators": [100] if fast_mode else [100, 200],
+                "clf__learning_rate": [0.1] if fast_mode else [0.05, 0.1],
             },
         },
         {
             "name": "SVM (RBF)",
             "estimator": SVC(probability=True),
             "param_grid": {
-                "clf__C": [0.1, 1, 10],
-                "clf__gamma": ["scale", "auto"],
+                "clf__C": [1] if fast_mode else [0.1, 1, 10],
+                "clf__gamma": ["scale"] if fast_mode else ["scale", "auto"],
             },
         },
     ]
+
+    resolved = resolve_selected_models(selected_models)
+    if resolved is None:
+        return models
+    return [model for model in models if model["name"] in resolved]
 
 
 def make_pipeline(estimator: BaseEstimator) -> Pipeline:

@@ -53,6 +53,12 @@ models_out_dir = "artifacts/models"
 metrics_out_json = "artifacts/metrics/train_val_results.json"
 leaderboard_out_csv = "artifacts/metrics/leaderboard_val.csv"
 best_model_out = "artifacts/models/best_model.joblib"
+cv = 5
+n_jobs = -1
+verbose = 1
+scoring = "f1_macro"
+models = ["logistic", "rf", "gb", "svm"]
+fast_mode = false
 
 [tool.incident_intelligence.evaluate]
 data = "data/processed/incident_snapshot_eval.csv"
