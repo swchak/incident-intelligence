@@ -24,7 +24,9 @@ from incident_intelligence.config import (
 from incident_intelligence.modeling.explain_local import (
     ExplainLocalConfig,
     run_local_explainability,
+    run_local_explainability_for_dataset_kind,
 )
+from incident_intelligence.modeling.train import with_dataset_suffix
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -135,6 +137,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Number of most influential features to show per class",
     )
+    parser.add_argument(
+        "--dataset-kind",
+        choices=["snapshot", "temporal"],
+        default="snapshot",
+        help="Use the standard processed eval dataset and dataset-specific artifact paths",
+    )
     return parser
 
 
@@ -145,12 +153,24 @@ def main() -> None:
 
     parser = build_parser()
     args = parser.parse_args()
+    dataset_kind = args.dataset_kind
 
     settings = merge_cli_args(args, load_config(ExplainLocalCLIConfig, "explain_local"))
 
+    out_dir = settings.out_dir or (
+        "artifacts/explain"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/explain", dataset_kind)
+    )
+    model_path = settings.model or (
+        "artifacts/models/best_model.joblib"
+        if dataset_kind == "snapshot"
+        else with_dataset_suffix("artifacts/models/best_model.joblib", dataset_kind)
+    )
+
     cfg = ExplainLocalConfig(
         label_col=settings.label_col,
-        out_dir=settings.out_dir,
+        out_dir=out_dir,
         background_n=settings.background_n,
         kernel_bg=settings.kernel_bg,
         kernel_nsamples=settings.kernel_nsamples,
@@ -158,15 +178,26 @@ def main() -> None:
         top_k=settings.top_k,
     )
 
-    result = run_local_explainability(
-        data_path=settings.data,
-        model_path=settings.model,
-        cfg=cfg,
-        row_indices=settings.row_indices,
-        n_examples=settings.n_examples,
-        top_k_classes=settings.top_k_classes,
-        top_features_per_class=settings.top_features_per_class,
-    )
+    if args.data is None:
+        result = run_local_explainability_for_dataset_kind(
+            dataset_kind=dataset_kind,
+            model_path=model_path,
+            cfg=cfg,
+            row_indices=settings.row_indices,
+            n_examples=settings.n_examples,
+            top_k_classes=settings.top_k_classes,
+            top_features_per_class=settings.top_features_per_class,
+        )
+    else:
+        result = run_local_explainability(
+            data_path=settings.data,
+            model_path=model_path,
+            cfg=cfg,
+            row_indices=settings.row_indices,
+            n_examples=settings.n_examples,
+            top_k_classes=settings.top_k_classes,
+            top_features_per_class=settings.top_features_per_class,
+        )
 
     print(f"Generated local explainability for model: {result.get('model', 'unknown')}")
     print(

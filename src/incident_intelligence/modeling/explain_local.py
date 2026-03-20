@@ -213,7 +213,10 @@ def run_local_explainability(
         raise KeyError(f"Label column '{cfg.label_col}' not found in {data_path}")
 
     y = df[cfg.label_col]
-    X = df.drop(columns=[cfg.label_col])
+    drop_cols = [cfg.label_col]
+    if "incident_id" in df.columns:
+        drop_cols.append("incident_id")
+    X = df.drop(columns=drop_cols)
 
     model_path = Path(model_path)
     model = load_model(model_path)
@@ -366,3 +369,38 @@ def run_local_explainability(
         "model": model_name,
         "out_dir": str(cfg.out_dir),
     }
+
+
+def run_local_explainability_for_dataset_kind(
+    *,
+    dataset_kind: str,
+    cfg: ExplainLocalConfig,
+    model_path: str | Path,
+    row_indices: list[int] | None = None,
+    n_examples: int = 5,
+    top_k_classes: int = 3,
+    top_features_per_class: int = 8,
+) -> Dict[str, Any]:
+    """
+    Generate local explainability artifacts using the standard processed
+    evaluation dataset for the requested dataset family.
+    """
+    if dataset_kind == "snapshot":
+        data_path = Path("data/processed/incident_snapshot_eval.csv")
+    elif dataset_kind == "temporal":
+        data_path = Path("data/processed/incident_temporal_eval.csv")
+    else:
+        raise ValueError(
+            f"Unsupported dataset_kind='{dataset_kind}'. "
+            "Expected one of: ['snapshot', 'temporal']"
+        )
+
+    return run_local_explainability(
+        data_path=data_path,
+        cfg=cfg,
+        model_path=model_path,
+        row_indices=row_indices,
+        n_examples=n_examples,
+        top_k_classes=top_k_classes,
+        top_features_per_class=top_features_per_class,
+    )
