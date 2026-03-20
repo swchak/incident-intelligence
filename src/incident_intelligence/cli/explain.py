@@ -65,12 +65,12 @@ def main() -> None:
 
     settings = merge_cli_args(args, load_config(ExplainCLIConfig, "explain"))
 
-    out_dir = settings.out_dir or (
+    out_dir = args.out_dir or (
         "artifacts/explain"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/explain", dataset_kind)
     )
-    models_dir = settings.models_dir or (
+    models_dir = args.models_dir or (
         "artifacts/models"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/models", dataset_kind)

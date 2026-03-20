@@ -157,12 +157,12 @@ def main() -> None:
 
     settings = merge_cli_args(args, load_config(ExplainLocalCLIConfig, "explain_local"))
 
-    out_dir = settings.out_dir or (
+    out_dir = args.out_dir or (
         "artifacts/explain"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/explain", dataset_kind)
     )
-    model_path = settings.model or (
+    model_path = args.model or (
         "artifacts/models/best_model.joblib"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/models/best_model.joblib", dataset_kind)

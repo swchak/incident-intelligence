@@ -116,12 +116,12 @@ def main() -> None:
     # Load base config and merge CLI overrides
     settings = merge_cli_args(args, load_config(EvaluateCLIConfig, "evaluate"))
 
-    metrics_out = settings.metrics_out or (
+    metrics_out = args.metrics_out or (
         "artifacts/metrics/evaluation.json"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/metrics/evaluation.json", dataset_kind)
     )
-    summary_csv_out = settings.summary_csv_out or (
+    summary_csv_out = args.summary_csv_out or (
         "artifacts/metrics/evaluation_summary.csv"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/metrics/evaluation_summary.csv", dataset_kind)
@@ -136,7 +136,7 @@ def main() -> None:
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/reports", dataset_kind)
     )
-    models_dir = settings.models_dir or (
+    models_dir = args.models_dir or (
         "artifacts/models"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/models", dataset_kind)
