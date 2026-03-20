@@ -20,6 +20,7 @@ import pandas as pd
 from sklearn.inspection import permutation_importance
 
 from incident_intelligence.modeling.evaluate import load_df
+from incident_intelligence.modeling.evaluate import find_model_files
 from incident_intelligence.modeling.explain_utils import (
     _HAS_SHAP,
     ensure_dir,
@@ -316,6 +317,7 @@ def run_explainability(
     cfg: ExplainConfig,
     models_dir: str | Path = "artifacts/models",
     model_path: str | Path | None = None,
+    dataset_kind: str | None = None,
 ) -> Dict[str, Any]:
     """
     Main entry point for generating explainability artifacts for one or more models.
@@ -354,7 +356,7 @@ def run_explainability(
         if not model_paths[0].exists():
             raise FileNotFoundError(f"Model not found: {model_paths[0]}")
     else:
-        model_paths = sorted(models_dir.glob("*.joblib"))
+        model_paths = find_model_files(models_dir, dataset_kind=dataset_kind)
         if not model_paths:
             raise FileNotFoundError(f"No .joblib model files found in {models_dir}")
 
@@ -392,4 +394,5 @@ def run_explainability_for_dataset_kind(
         cfg=cfg,
         models_dir=models_dir,
         model_path=model_path,
+        dataset_kind=dataset_kind,
     )

@@ -116,7 +116,30 @@ def load_pipeline(path: str | Path) -> Pipeline:
 
 
 
-def find_model_files(models_dir: str | Path) -> List[Path]:
+def _is_compatible_model_artifact(
+    model_path: str | Path,
+    dataset_kind: str | None = None,
+) -> bool:
+    """
+    Return whether a model artifact filename is compatible with the requested
+    dataset family.
+
+    This protects snapshot runs from accidentally loading legacy temporal
+    artifacts such as ``best_model_temporal.joblib`` that may still live in
+    ``artifacts/models`` from older repo layouts.
+    """
+    stem = Path(model_path).stem
+    if dataset_kind == "snapshot":
+        return "_temporal" not in stem
+    if dataset_kind == "temporal":
+        return True
+    return True
+
+
+def find_model_files(
+    models_dir: str | Path,
+    dataset_kind: str | None = None,
+) -> List[Path]:
     """
     Find all serialized model artifacts inside a directory.
 
@@ -132,7 +155,11 @@ def find_model_files(models_dir: str | Path) -> List[Path]:
     models_dir = Path(models_dir)
     if not models_dir.exists():
         raise FileNotFoundError(f"Models directory not found: {models_dir}")
-    return sorted(models_dir.glob("*.joblib"))
+    model_paths = sorted(models_dir.glob("*.joblib"))
+    compatible = [
+        path for path in model_paths if _is_compatible_model_artifact(path, dataset_kind)
+    ]
+    return compatible
 
 
 
@@ -593,6 +620,6 @@ def run_evaluation_for_dataset_kind(
     if model_path:
         model_paths = [Path(model_path)]
     else:
-        model_paths = find_model_files(models_dir)
+        model_paths = find_model_files(models_dir, dataset_kind=dataset_kind)
 
     return evaluate_models(model_paths, df_eval, cfg)
