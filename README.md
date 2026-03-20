@@ -152,6 +152,25 @@ incident-explain --dataset-kind temporal
 incident-explain-local --dataset-kind temporal
 ```
 
+### Run The Same Flows With Make
+
+```bash
+make generate
+make train
+make evaluate
+make explain
+make explain-local
+
+make generate-sequence
+make build-temporal-features
+make train-temporal
+make evaluate-temporal
+make explain-temporal
+make explain-local-temporal
+make pipeline-temporal
+make pipeline-temporal-fast
+```
+
 ## Training Controls
 
 Training supports configurable search behavior through [src/incident_intelligence/cli/train.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/cli/train.py) and [src/incident_intelligence/cli/pipeline.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/cli/pipeline.py).
@@ -301,19 +320,39 @@ incident-intelligence/
 
 ## Makefile Notes
 
-The Makefile still provides convenience targets for the common workflow:
+The Makefile now includes both snapshot and temporal targets:
 
 ```bash
 make install
 make generate
+make generate-sequence
+make build-temporal-features
 make train
+make train-temporal
 make evaluate
+make evaluate-temporal
 make explain
+make explain-temporal
 make explain-local
+make explain-local-temporal
 make pipeline
+make pipeline-temporal
+make pipeline-temporal-fast
 ```
 
-For the most up-to-date feature set, especially the temporal workflow and training controls, prefer the CLI commands directly.
+The temporal fast target uses a lighter training configuration by default:
+
+```bash
+make pipeline-temporal-fast
+```
+
+The Makefile also supports pass-through argument variables when you want custom settings:
+
+```bash
+make train-temporal TRAIN_ARGS="--fast-mode --models logistic,rf --cv 3 --n-jobs 1"
+make evaluate-temporal EVAL_ARGS="--model artifacts/models_temporal/best_model.joblib"
+make pipeline-temporal PIPELINE_ARGS="--fast-mode --models logistic,rf --cv 3 --n-jobs 1"
+```
 
 Also note that `make clean` removes both `artifacts/` and `data/`.
 
