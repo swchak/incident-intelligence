@@ -100,12 +100,14 @@ def save_shap_summary_plot(
     png_path = out_dir / "shap_importance.png"
 
     plt.figure()
+    plot_rng = np.random.default_rng(cfg.random_state)
     shap.summary_plot(
         shap_list,
         X_ex,
         class_names=classes if classes else None,
         plot_type="bar",
         show=False,
+        rng=plot_rng,
     )
     plt.tight_layout()
     plt.savefig(png_path, dpi=200)
