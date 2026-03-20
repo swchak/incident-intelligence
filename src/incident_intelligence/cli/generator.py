@@ -16,7 +16,7 @@ Outputs are written to disk and the resulting file paths are printed.
 import argparse
 
 from incident_intelligence.config import load_config, merge_cli_args, GeneratorCLIConfig
-from incident_intelligence.data.generator import GeneratorConfig, generate_and_save_datasets
+from incident_intelligence.data.generate_snapshot import GeneratorConfig, generate_and_save_datasets
 
 
 def build_parser() -> argparse.ArgumentParser:

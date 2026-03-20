@@ -332,9 +332,9 @@ def generate_and_save_datasets(
     processed_dir = SETTINGS.data_dir / cfg.processed_dir
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    train_path = processed_dir / "incident_root_cause_train.csv"
-    val_path = processed_dir / "incident_root_cause_val.csv"
-    eval_path = processed_dir / "incident_root_cause_eval.csv"
+    train_path = processed_dir / "incident_snapshot_train.csv"
+    val_path = processed_dir / "incident_snapshot_val.csv"
+    eval_path = processed_dir / "incident_snapshot_eval.csv"
 
     # Save datasets to disk
     train_df.to_csv(train_path, index=False)

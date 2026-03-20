@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import GridSearchCV
 
 from incident_intelligence.modeling.baseline import (
@@ -54,6 +53,16 @@ class TrainValidateConfig:
     leaderboard_out_csv: str = "artifacts/metrics/leaderboard_val.csv"
     best_model_out: str = "artifacts/models/best_model.joblib"
 
+def with_dataset_suffix(path_str: str, dataset_kind: str) -> str:
+    """
+    Append dataset kind (e.g., 'snapshot' or 'temporal') to a file path.
+
+    Example:
+        artifacts/models/best_model.joblib
+        -> artifacts/models/best_model_temporal.joblib
+    """
+    path = Path(path_str)
+    return str(path.with_name(f"{path.stem}_{dataset_kind}{path.suffix}"))
 
 def _safe_model_name(name: str) -> str:
     """
@@ -97,30 +106,78 @@ def load_df(path: str | Path) -> pd.DataFrame:
         return pd.read_parquet(path)
     raise ValueError(f"Unsupported file type: {path.suffix} (use .csv or .parquet)")
 
-
-def split_xy(df: pd.DataFrame, label_col: str) -> Tuple[pd.DataFrame, pd.Series]:
+def load_training_data(
+    dataset_kind: str = "snapshot",
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split a dataframe into features (X) and target labels (y) based on the specified label column.
-    The label column is separated from the features, and both are returned.
+    Load train and validation datasets based on dataset kind.
 
     Args:
-    - df: Input dataframe containing both features and the target label column.
-    - label_col: Name of the target label column to separate.
+        dataset_kind: Which processed dataset family to load.
+            Supported:
+            - "snapshot"
+            - "temporal"
 
     Returns:
-    - X: DataFrame containing the feature columns (all columns except label_col).
-    - y: Series containing the target labels (the label_col).
-
-    Raises:    
-    - ValueError: If the specified label_col is not found in the dataframe columns.
+        (train_df, val_df)
     """
+    if dataset_kind == "snapshot":
+        train_path = "data/processed/incident_snapshot_train.csv"
+        val_path = "data/processed/incident_snapshot_val.csv"
+    elif dataset_kind == "temporal":
+        train_path = "data/processed/incident_temporal_train.csv"
+        val_path = "data/processed/incident_temporal_val.csv"
+    else:
+        raise ValueError(
+            f"Unsupported dataset_kind='{dataset_kind}'. "
+            "Expected one of: ['snapshot', 'temporal']"
+        )
 
+    train_df = load_df(train_path)
+    val_df = load_df(val_path)
+    return train_df, val_df
+
+
+def load_eval_data(dataset_kind: str = "snapshot") -> pd.DataFrame:
+    """
+    Load evaluation dataset based on dataset kind.
+
+    Args:
+        dataset_kind: Which processed dataset family to load.
+
+    Returns:
+        Evaluation dataframe.
+    """
+    if dataset_kind == "snapshot":
+        eval_path = "data/processed/incident_snapshot_eval.csv"
+    elif dataset_kind == "temporal":
+        eval_path = "data/processed/incident_temporal_eval.csv"
+    else:
+        raise ValueError(
+            f"Unsupported dataset_kind='{dataset_kind}'. "
+            "Expected one of: ['snapshot', 'temporal']"
+        )
+
+    return load_df(eval_path)
+
+
+def split_xy(
+    df: pd.DataFrame,
+    label_col: str,
+    drop_cols: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Split a dataframe into features (X) and target labels (y).
+    """
     if label_col not in df.columns:
         raise ValueError(f"label_col='{label_col}' not found. Columns={list(df.columns)}")
-    X = df.drop(columns=[label_col])
+
+    drop_cols = drop_cols or []
+    cols_to_drop = [label_col] + [c for c in drop_cols if c in df.columns]
+
+    X = df.drop(columns=cols_to_drop)
     y = df[label_col]
     return X, y
-
 
 def _json_safe(obj: Any) -> Any:
     """
@@ -149,7 +206,6 @@ def fit_grid(
     X_train: pd.DataFrame,
     y_train: pd.Series,
     *,
-    model_name: str,
     estimator: Any,
     param_grid: Dict[str, Any],
     base_cfg: BaselineTrainConfig,
@@ -164,7 +220,6 @@ def fit_grid(
     Args:
         X_train: Training feature dataframe.
         y_train: Training target series.
-        model_name: Human-readable model name. Included for symmetry/debugging.
         estimator: Estimator instance to wrap in a pipeline.
         param_grid: GridSearchCV parameter grid using pipeline step names.
         base_cfg: Shared baseline training configuration.
@@ -234,10 +289,11 @@ def train_and_validate(
     Returns:
         A payload containing the selected best model and all per-model validation results.
     """
+    NON_FEATURE_COLUMNS = ["incident_id"]
     base_cfg = base_cfg or BaselineTrainConfig(label_col=cfg.label_col)
 
-    X_train, y_train = split_xy(train_df, cfg.label_col)
-    X_val, y_val = split_xy(val_df, cfg.label_col)
+    X_train, y_train = split_xy(train_df, cfg.label_col, drop_cols=NON_FEATURE_COLUMNS)
+    X_val, y_val = split_xy(val_df, cfg.label_col, drop_cols=NON_FEATURE_COLUMNS)
 
     models_out_dir = Path(cfg.models_out_dir)
     models_out_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +308,6 @@ def train_and_validate(
         grid = fit_grid(
             X_train,
             y_train,
-            model_name=name,
             estimator=est,
             param_grid=param_grid,
             base_cfg=base_cfg,
@@ -268,8 +323,6 @@ def train_and_validate(
             y_val,
             pred_out=pred_out,
         )
-
-        y_pred = pred_out["y_pred"]
 
         metrics["val_accuracy"] = metrics["accuracy"]
         metrics["val_f1_macro"] = metrics["f1_macro"]
@@ -364,4 +417,17 @@ def run_training(
     """
     train_df = load_df(train_path)
     val_df = load_df(val_path)
+    return train_and_validate(train_df, val_df, cfg=cfg, base_cfg=base_cfg)
+
+def run_training_for_dataset_kind(
+    dataset_kind: str,
+    *,
+    cfg: TrainValidateConfig,
+    base_cfg: Optional[BaselineTrainConfig] = None,
+) -> Dict[str, Any]:
+    """
+    Load the standard processed train/validation datasets for a given dataset kind
+    and run training.
+    """
+    train_df, val_df = load_training_data(dataset_kind=dataset_kind)
     return train_and_validate(train_df, val_df, cfg=cfg, base_cfg=base_cfg)
