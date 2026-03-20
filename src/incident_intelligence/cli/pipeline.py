@@ -57,6 +57,41 @@ def build_parser() -> argparse.ArgumentParser:
         default="snapshot",
         help="Run the snapshot workflow or the sequence->temporal workflow",
     )
+    parser.add_argument(
+        "--cv",
+        type=int,
+        default=None,
+        help="Number of cross-validation folds for training",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        help="Parallel jobs for training GridSearchCV (-1 uses all cores)",
+    )
+    parser.add_argument(
+        "--verbose",
+        type=int,
+        default=None,
+        help="Verbosity for training GridSearchCV",
+    )
+    parser.add_argument(
+        "--scoring",
+        type=str,
+        default=None,
+        help="Scoring metric for training GridSearchCV",
+    )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default=None,
+        help="Comma-separated training model aliases, e.g. logistic,rf,gb,svm",
+    )
+    parser.add_argument(
+        "--fast-mode",
+        action="store_true",
+        help="Use smaller training grids intended for faster iteration",
+    )
     return parser
 
 
@@ -132,6 +167,11 @@ def _run_temporal_generation() -> None:
 def main() -> None:
     args = build_parser().parse_args()
     dataset_kind = args.dataset_kind
+    selected_models = None
+    if args.models is not None:
+        selected_models = tuple(
+            part.strip() for part in args.models.split(",") if part.strip()
+        )
 
     print("Running pipeline...\n")
 
@@ -159,6 +199,12 @@ def main() -> None:
             train_settings.best_model_out,
             dataset_kind,
         ),
+        cv=args.cv if args.cv is not None else train_settings.cv,
+        n_jobs=args.n_jobs if args.n_jobs is not None else train_settings.n_jobs,
+        verbose=args.verbose if args.verbose is not None else train_settings.verbose,
+        scoring=args.scoring if args.scoring is not None else train_settings.scoring,
+        models=selected_models if selected_models is not None else train_settings.models,
+        fast_mode=args.fast_mode or train_settings.fast_mode,
     )
 
     if dataset_kind == "snapshot":
