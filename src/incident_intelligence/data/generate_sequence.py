@@ -52,14 +52,24 @@ class IncidentSequenceGenerator:
         lower = max(2, int(sequence_length * 0.2))
         upper = max(lower + 1, int(sequence_length * 0.7))
         secondary_choices = [cause for cause in ROOT_CAUSES if cause != label]
+        severity = float(self.rng.uniform(0.65, 1.20))
+        if label != "normal" and self.rng.random() < 0.35:
+            severity *= float(self.rng.uniform(0.35, 0.7))
+
+        primary_blend = float(self.rng.uniform(0.75, 1.0))
+        if label != "normal" and self.rng.random() < 0.40:
+            primary_blend *= float(self.rng.uniform(0.45, 0.8))
+
         return {
-            "severity": float(self.rng.uniform(0.75, 1.25)),
-            "noise_scale": float(self.rng.uniform(0.9, 1.5)),
+            "severity": severity,
+            "primary_blend": primary_blend,
+            "noise_scale": float(self.rng.uniform(1.1, 1.9)),
             "change_point": int(self.rng.integers(lower, upper)),
             "spike_center": int(self.rng.integers(max(2, sequence_length // 4), max(3, (3 * sequence_length) // 4))),
-            "spike_width": float(self.rng.uniform(1.8, 3.5)),
+            "spike_width": float(self.rng.uniform(2.0, 4.8)),
             "secondary_label": str(self.rng.choice(secondary_choices)),
-            "secondary_weight": float(self.rng.uniform(0.08, 0.28)),
+            "secondary_weight": float(self.rng.uniform(0.15, 0.42)),
+            "normal_noise_weight": float(self.rng.uniform(0.05, 0.22)),
         }
 
     def _generate_incident_sequence(
@@ -198,21 +208,33 @@ class IncidentSequenceGenerator:
     ) -> Dict[str, np.ndarray]:
         weight = float(profile["secondary_weight"])
         if primary_label == "normal":
-            weight *= 0.6
+            weight *= 0.75
         overlay = self._secondary_overlay(
             str(profile["secondary_label"]),
             t,
             weight,
             profile,
         )
+        normal_overlay = self._secondary_overlay(
+            "normal",
+            t,
+            float(profile["normal_noise_weight"]),
+            profile,
+        )
 
         blended = {}
         for key, values in metrics.items():
-            blended[key] = values + overlay.get(key, 0.0)
+            primary_scale = float(profile["primary_blend"])
+            blended[key] = (
+                primary_scale * values
+                + overlay.get(key, 0.0)
+                + normal_overlay.get(key, 0.0)
+            )
 
         blended["latency"] += 0.15 * np.maximum(blended["dependency_latency"] - baseline["dependency_latency"], 0)
-        blended["avg_cpu_usage"] += 0.04 * np.maximum(blended["request_rate"] - baseline["request_rate"], 0)
-        blended["error_rate"] += 0.001 * np.maximum(blended["latency"] - baseline["latency"], 0)
+        blended["avg_cpu_usage"] += 0.06 * np.maximum(blended["request_rate"] - baseline["request_rate"], 0)
+        blended["error_rate"] += 0.0015 * np.maximum(blended["latency"] - baseline["latency"], 0)
+        blended["mem_growth"] += 0.0004 * np.maximum(blended["avg_cpu_usage"] - baseline["avg_cpu_usage"], 0)
         return blended
 
     def _memory_leak_pattern(
@@ -223,15 +245,15 @@ class IncidentSequenceGenerator:
     ) -> Dict[str, np.ndarray]:
         n = len(t)
         severity = float(profile["severity"])
-        mem_growth = b["mem_growth"] + (0.010 + 0.008 * severity) * t + self._scaled_noise(n, 0.012, profile)
-        latency = b["latency"] + (1.2 + 1.1 * severity) * t + 16 * mem_growth + self._scaled_noise(n, 7.0, profile)
-        avg_cpu_usage = b["avg_cpu_usage"] + (0.15 + 0.25 * severity) * t + self._scaled_noise(n, 3.0, profile)
-        request_rate = b["request_rate"] + self._scaled_noise(n, 6.0, profile)
-        error_rate = b["error_rate"] + 0.0015 * t + self._scaled_noise(n, 0.004, profile)
-        dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 3.0, profile)
-        upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.003, profile)
-        oom_log_count = (mem_growth > np.percentile(mem_growth, 80)).astype(int)
-        timeout_log_count = (latency > np.percentile(latency, 75)).astype(int)
+        mem_growth = b["mem_growth"] + (0.005 + 0.005 * severity) * t + self._scaled_noise(n, 0.016, profile)
+        latency = b["latency"] + (0.7 + 0.8 * severity) * t + 10 * mem_growth + self._scaled_noise(n, 10.0, profile)
+        avg_cpu_usage = b["avg_cpu_usage"] + (0.05 + 0.16 * severity) * t + self._scaled_noise(n, 4.0, profile)
+        request_rate = b["request_rate"] + self._scaled_noise(n, 8.0, profile)
+        error_rate = b["error_rate"] + 0.0007 * t + self._scaled_noise(n, 0.006, profile)
+        dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
+        upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.004, profile)
+        oom_log_count = (mem_growth > np.percentile(mem_growth, 88)).astype(int)
+        timeout_log_count = (latency > np.percentile(latency, 82)).astype(int)
 
         return self._finalize(
             avg_cpu_usage=avg_cpu_usage,
@@ -263,11 +285,11 @@ class IncidentSequenceGenerator:
         upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.004, profile)
         dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
 
-        error_rate[change_point:] += 0.05 + 0.06 * severity
-        latency[change_point:] += 30 + 35 * severity
-        avg_cpu_usage[change_point:] += 4 + 5 * severity
-        upstream_error_rate[change_point:] += 0.01 + 0.03 * severity
-        timeout_log_count = (latency > np.percentile(latency, 70)).astype(int)
+        error_rate[change_point:] += 0.025 + 0.035 * severity
+        latency[change_point:] += 16 + 18 * severity
+        avg_cpu_usage[change_point:] += 2.5 + 3.5 * severity
+        upstream_error_rate[change_point:] += 0.006 + 0.016 * severity
+        timeout_log_count = (latency > np.percentile(latency, 76)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
 
         return self._finalize(
@@ -300,12 +322,12 @@ class IncidentSequenceGenerator:
         mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.012, profile)
         request_rate = b["request_rate"] + self._scaled_noise(n, 5.0, profile)
 
-        dependency_latency[change_point:] += np.linspace(18, 75 + 25 * severity, n - change_point)
-        upstream_error_rate[change_point:] += np.linspace(0.015, 0.08 + 0.04 * severity, n - change_point)
-        latency[change_point:] += 0.6 * (dependency_latency[change_point:] - b["dependency_latency"])
-        error_rate[change_point:] += 0.35 * upstream_error_rate[change_point:]
+        dependency_latency[change_point:] += np.linspace(10, 42 + 18 * severity, n - change_point)
+        upstream_error_rate[change_point:] += np.linspace(0.008, 0.045 + 0.03 * severity, n - change_point)
+        latency[change_point:] += 0.42 * (dependency_latency[change_point:] - b["dependency_latency"])
+        error_rate[change_point:] += 0.22 * upstream_error_rate[change_point:]
 
-        timeout_log_count = (latency > np.percentile(latency, 70)).astype(int)
+        timeout_log_count = (latency > np.percentile(latency, 76)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
 
         return self._finalize(
@@ -328,14 +350,14 @@ class IncidentSequenceGenerator:
     ) -> Dict[str, np.ndarray]:
         n = len(t)
         severity = float(profile["severity"])
-        avg_cpu_usage = b["avg_cpu_usage"] + (1.2 + 1.2 * severity) * t + self._scaled_noise(n, 4.5, profile)
-        request_rate = b["request_rate"] + self._scaled_noise(n, 5.0, profile)
-        latency = b["latency"] + 1.2 * np.maximum(avg_cpu_usage - 72, 0) + self._scaled_noise(n, 6.0, profile)
-        error_rate = b["error_rate"] + 0.0012 * np.maximum(avg_cpu_usage - 78, 0) + self._scaled_noise(n, 0.004, profile)
-        mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.012, profile)
-        dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 3.0, profile)
-        upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.003, profile)
-        timeout_log_count = (latency > np.percentile(latency, 75)).astype(int)
+        avg_cpu_usage = b["avg_cpu_usage"] + (0.7 + 0.8 * severity) * t + self._scaled_noise(n, 5.5, profile)
+        request_rate = b["request_rate"] + self._scaled_noise(n, 7.0, profile)
+        latency = b["latency"] + 0.8 * np.maximum(avg_cpu_usage - 74, 0) + self._scaled_noise(n, 8.0, profile)
+        error_rate = b["error_rate"] + 0.0008 * np.maximum(avg_cpu_usage - 80, 0) + self._scaled_noise(n, 0.005, profile)
+        mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.014, profile)
+        dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
+        upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.004, profile)
+        timeout_log_count = (latency > np.percentile(latency, 80)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
 
         return self._finalize(
@@ -360,16 +382,16 @@ class IncidentSequenceGenerator:
         center = int(profile["spike_center"])
         width = float(profile["spike_width"])
         severity = float(profile["severity"])
-        spike = np.exp(-0.5 * ((t - center) / width) ** 2) * (90 + 70 * severity)
+        spike = np.exp(-0.5 * ((t - center) / width) ** 2) * (55 + 45 * severity)
 
-        request_rate = b["request_rate"] + spike + self._scaled_noise(n, 8.0, profile)
-        avg_cpu_usage = b["avg_cpu_usage"] + 0.18 * spike + self._scaled_noise(n, 4.0, profile)
-        latency = b["latency"] + 0.22 * spike + self._scaled_noise(n, 8.0, profile)
-        error_rate = b["error_rate"] + 0.0005 * spike + self._scaled_noise(n, 0.004, profile)
-        mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.012, profile)
-        dependency_latency = b["dependency_latency"] + 0.05 * spike + self._scaled_noise(n, 3.0, profile)
-        upstream_error_rate = b["upstream_error_rate"] + 0.0002 * spike + self._scaled_noise(n, 0.004, profile)
-        timeout_log_count = (latency > np.percentile(latency, 75)).astype(int)
+        request_rate = b["request_rate"] + spike + self._scaled_noise(n, 10.0, profile)
+        avg_cpu_usage = b["avg_cpu_usage"] + 0.14 * spike + self._scaled_noise(n, 5.0, profile)
+        latency = b["latency"] + 0.15 * spike + self._scaled_noise(n, 10.0, profile)
+        error_rate = b["error_rate"] + 0.00025 * spike + self._scaled_noise(n, 0.005, profile)
+        mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.014, profile)
+        dependency_latency = b["dependency_latency"] + 0.03 * spike + self._scaled_noise(n, 4.0, profile)
+        upstream_error_rate = b["upstream_error_rate"] + 0.0001 * spike + self._scaled_noise(n, 0.005, profile)
+        timeout_log_count = (latency > np.percentile(latency, 80)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
 
         return self._finalize(
@@ -391,18 +413,18 @@ class IncidentSequenceGenerator:
         profile: Dict[str, float | int | str],
     ) -> Dict[str, np.ndarray]:
         n = len(t)
-        avg_cpu_usage = b["avg_cpu_usage"] + self._scaled_noise(n, 3.0, profile)
-        mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.008, profile)
-        request_rate = b["request_rate"] + self._scaled_noise(n, 5.0, profile)
-        error_rate = b["error_rate"] + self._scaled_noise(n, 0.003, profile)
-        latency = b["latency"] + self._scaled_noise(n, 5.0, profile)
-        upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.003, profile)
-        dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 3.0, profile)
-        if self.rng.random() < 0.25:
+        avg_cpu_usage = b["avg_cpu_usage"] + self._scaled_noise(n, 4.5, profile)
+        mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.012, profile)
+        request_rate = b["request_rate"] + self._scaled_noise(n, 7.0, profile)
+        error_rate = b["error_rate"] + self._scaled_noise(n, 0.004, profile)
+        latency = b["latency"] + self._scaled_noise(n, 8.0, profile)
+        upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.004, profile)
+        dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
+        if self.rng.random() < 0.45:
             mild_overlay = self._secondary_overlay(
                 str(profile["secondary_label"]),
                 t,
-                float(profile["secondary_weight"]) * 0.45,
+                float(profile["secondary_weight"]) * float(self.rng.uniform(0.35, 0.7)),
                 profile,
             )
             avg_cpu_usage += mild_overlay["avg_cpu_usage"]
@@ -412,8 +434,8 @@ class IncidentSequenceGenerator:
             latency += mild_overlay["latency"]
             upstream_error_rate += mild_overlay["upstream_error_rate"]
             dependency_latency += mild_overlay["dependency_latency"]
+        timeout_log_count = (latency > np.percentile(latency, 92)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
-        timeout_log_count = np.zeros(n, dtype=int)
 
         return self._finalize(
             avg_cpu_usage=avg_cpu_usage,
