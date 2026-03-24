@@ -47,8 +47,10 @@ input = "data/raw/incidents_sequence_raw.csv"
 output_dir = "data/processed"
 
 [tool.incident_intelligence.train]
-train = "data/processed/incident_snapshot_train.csv"
-val = "data/processed/incident_snapshot_val.csv"
+train_snapshot = "data/processed/incident_snapshot_train.csv"
+val_snapshot = "data/processed/incident_snapshot_val.csv"
+train_temporal = "data/processed/incident_temporal_train.csv"
+val_temporal = "data/processed/incident_temporal_val.csv"
 label_col = "root_cause_label"
 models_out_dir = "artifacts/models"
 metrics_out_json = "artifacts/metrics/train_val_results.json"

@@ -114,6 +114,17 @@ def _path_in_dataset_dir(path_str: str, dataset_kind: str) -> str:
     return with_parent_dir_suffix(path_str, dataset_kind)
 
 
+def _train_val_paths_for_dataset_kind(settings: TrainCLIConfig, dataset_kind: str) -> tuple[str, str]:
+    if dataset_kind == "snapshot":
+        return settings.train_snapshot, settings.val_snapshot
+    if dataset_kind == "temporal":
+        return settings.train_temporal, settings.val_temporal
+    raise ValueError(
+        f"Unsupported dataset_kind='{dataset_kind}'. "
+        "Expected one of: ['snapshot', 'temporal']"
+    )
+
+
 def _model_paths_from_training_result(train_result: dict) -> list[str]:
     model_paths = [m["model_path"] for m in train_result.get("all_models", [])]
     best_model_path = train_result.get("best_model", {}).get("model_path")
@@ -205,6 +216,10 @@ def main() -> None:
         _run_temporal_generation()
 
     train_settings = load_config(TrainCLIConfig, "train")
+    train_path, val_path = _train_val_paths_for_dataset_kind(
+        train_settings,
+        dataset_kind,
+    )
     train_cfg = TrainValidateConfig(
         label_col=train_settings.label_col,
         models_out_dir=_models_dir_for_dataset_kind(
@@ -233,14 +248,16 @@ def main() -> None:
 
     if dataset_kind == "snapshot":
         train_result = run_training(
-            train_path="data/processed/incident_snapshot_train.csv",
-            val_path="data/processed/incident_snapshot_val.csv",
+            train_path=train_path,
+            val_path=val_path,
             cfg=train_cfg,
         )
     else:
         train_result = run_training_for_dataset_kind(
             dataset_kind=dataset_kind,
             cfg=train_cfg,
+            train_path=train_path,
+            val_path=val_path,
         )
 
     print(f"[train] best model: {train_result['best_model']['model_name']}")

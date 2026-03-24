@@ -125,6 +125,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_train_val_paths(
+    dataset_kind: str,
+    settings: TrainCLIConfig,
+    *,
+    train_override: str | None = None,
+    val_override: str | None = None,
+) -> tuple[str, str]:
+    train_path = train_override
+    val_path = val_override
+
+    if dataset_kind == "snapshot":
+        train_path = train_path or settings.train_snapshot
+        val_path = val_path or settings.val_snapshot
+    elif dataset_kind == "temporal":
+        train_path = train_path or settings.train_temporal
+        val_path = val_path or settings.val_temporal
+    else:
+        raise ValueError(
+            f"Unsupported dataset_kind='{dataset_kind}'. "
+            "Expected one of: ['snapshot', 'temporal']"
+        )
+
+    return train_path, val_path
+
 
 def main() -> None:
     """Parse settings, execute training, and print the best-model summary.
@@ -143,6 +167,12 @@ def main() -> None:
 
     # Load the named training config and let explicit CLI flags override it.
     settings = merge_cli_args(args, load_config(TrainCLIConfig, "train"))
+    train_path, val_path = _resolve_train_val_paths(
+        dataset_kind,
+        settings,
+        train_override=args.train,
+        val_override=args.val,
+    )
 
 
     cfg = TrainValidateConfig(
@@ -187,8 +217,8 @@ def main() -> None:
     result = run_training_for_dataset_kind(
         dataset_kind=dataset_kind,
         cfg=cfg,
-        train_path=settings.train,
-        val_path=settings.val,
+        train_path=train_path,
+        val_path=val_path,
     )
 
     # Emit a concise terminal summary for humans while richer artifacts are
