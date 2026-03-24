@@ -214,25 +214,25 @@ class IncidentSequenceGenerator:
         }
 
         if label == "memory_leak":
-            overlay["mem_growth"] += weight * (0.012 * ramp + self._noise(n, 0.003))
-            overlay["latency"] += weight * (20 * ramp + self._noise(n, 3.0))
-            overlay["avg_cpu_usage"] += weight * (4 * ramp + self._noise(n, 1.5))
+            overlay["mem_growth"] += weight * (0.008 * ramp + self._noise(n, 0.003))
+            overlay["latency"] += weight * (13 * ramp + self._noise(n, 3.0))
+            overlay["avg_cpu_usage"] += weight * (2.6 * ramp + self._noise(n, 1.5))
         elif label == "bad_deployment":
-            overlay["error_rate"] += weight * (0.08 * ramp + self._noise(n, 0.004))
-            overlay["latency"] += weight * (30 * ramp + self._noise(n, 4.0))
-            overlay["avg_cpu_usage"] += weight * (5 * ramp + self._noise(n, 1.5))
+            overlay["error_rate"] += weight * (0.052 * ramp + self._noise(n, 0.004))
+            overlay["latency"] += weight * (20 * ramp + self._noise(n, 4.0))
+            overlay["avg_cpu_usage"] += weight * (3.4 * ramp + self._noise(n, 1.5))
         elif label == "external_dependency_failure":
-            overlay["dependency_latency"] += weight * (40 * ramp + self._noise(n, 3.0))
-            overlay["upstream_error_rate"] += weight * (0.07 * ramp + self._noise(n, 0.003))
-            overlay["latency"] += weight * (18 * ramp + self._noise(n, 3.0))
+            overlay["dependency_latency"] += weight * (26 * ramp + self._noise(n, 3.0))
+            overlay["upstream_error_rate"] += weight * (0.045 * ramp + self._noise(n, 0.003))
+            overlay["latency"] += weight * (12 * ramp + self._noise(n, 3.0))
         elif label == "cpu_saturation":
-            overlay["avg_cpu_usage"] += weight * (12 * ramp + self._noise(n, 2.0))
-            overlay["latency"] += weight * (16 * ramp + self._noise(n, 3.0))
-            overlay["error_rate"] += weight * (0.03 * ramp + self._noise(n, 0.002))
+            overlay["avg_cpu_usage"] += weight * (8 * ramp + self._noise(n, 2.0))
+            overlay["latency"] += weight * (10.5 * ramp + self._noise(n, 3.0))
+            overlay["error_rate"] += weight * (0.02 * ramp + self._noise(n, 0.002))
         elif label == "traffic_spike":
-            overlay["request_rate"] += weight * (90 * spike + self._noise(n, 4.0))
-            overlay["avg_cpu_usage"] += weight * (10 * spike + self._noise(n, 2.0))
-            overlay["latency"] += weight * (14 * spike + self._noise(n, 3.0))
+            overlay["request_rate"] += weight * (60 * spike + self._noise(n, 4.0))
+            overlay["avg_cpu_usage"] += weight * (6.5 * spike + self._noise(n, 2.0))
+            overlay["latency"] += weight * (9.0 * spike + self._noise(n, 3.0))
         else:
             overlay["latency"] += weight * self._noise(n, 2.0)
             overlay["error_rate"] += weight * self._noise(n, 0.002)
@@ -287,9 +287,9 @@ class IncidentSequenceGenerator:
     ) -> Dict[str, np.ndarray]:
         n = len(t)
         severity = float(profile["severity"])
-        mem_growth = b["mem_growth"] + (0.005 + 0.005 * severity) * t + self._scaled_noise(n, 0.016, profile)
-        latency = b["latency"] + (0.7 + 0.8 * severity) * t + 10 * mem_growth + self._scaled_noise(n, 10.0, profile)
-        avg_cpu_usage = b["avg_cpu_usage"] + (0.05 + 0.16 * severity) * t + self._scaled_noise(n, 4.0, profile)
+        mem_growth = b["mem_growth"] + (0.0035 + 0.0035 * severity) * t + self._scaled_noise(n, 0.016, profile)
+        latency = b["latency"] + (0.45 + 0.55 * severity) * t + 7 * mem_growth + self._scaled_noise(n, 10.0, profile)
+        avg_cpu_usage = b["avg_cpu_usage"] + (0.03 + 0.10 * severity) * t + self._scaled_noise(n, 4.0, profile)
         request_rate = b["request_rate"] + self._scaled_noise(n, 8.0, profile)
         error_rate = b["error_rate"] + 0.0007 * t + self._scaled_noise(n, 0.006, profile)
         dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
@@ -327,10 +327,10 @@ class IncidentSequenceGenerator:
         upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.004, profile)
         dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
 
-        error_rate[change_point:] += 0.025 + 0.035 * severity
-        latency[change_point:] += 16 + 18 * severity
-        avg_cpu_usage[change_point:] += 2.5 + 3.5 * severity
-        upstream_error_rate[change_point:] += 0.006 + 0.016 * severity
+        error_rate[change_point:] += 0.016 + 0.022 * severity
+        latency[change_point:] += 10 + 12 * severity
+        avg_cpu_usage[change_point:] += 1.6 + 2.3 * severity
+        upstream_error_rate[change_point:] += 0.004 + 0.010 * severity
         timeout_log_count = (latency > np.percentile(latency, 76)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
 
@@ -364,10 +364,10 @@ class IncidentSequenceGenerator:
         mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.012, profile)
         request_rate = b["request_rate"] + self._scaled_noise(n, 5.0, profile)
 
-        dependency_latency[change_point:] += np.linspace(10, 42 + 18 * severity, n - change_point)
-        upstream_error_rate[change_point:] += np.linspace(0.008, 0.045 + 0.03 * severity, n - change_point)
-        latency[change_point:] += 0.42 * (dependency_latency[change_point:] - b["dependency_latency"])
-        error_rate[change_point:] += 0.22 * upstream_error_rate[change_point:]
+        dependency_latency[change_point:] += np.linspace(7, 28 + 12 * severity, n - change_point)
+        upstream_error_rate[change_point:] += np.linspace(0.005, 0.03 + 0.02 * severity, n - change_point)
+        latency[change_point:] += 0.28 * (dependency_latency[change_point:] - b["dependency_latency"])
+        error_rate[change_point:] += 0.15 * upstream_error_rate[change_point:]
 
         timeout_log_count = (latency > np.percentile(latency, 76)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
@@ -392,10 +392,10 @@ class IncidentSequenceGenerator:
     ) -> Dict[str, np.ndarray]:
         n = len(t)
         severity = float(profile["severity"])
-        avg_cpu_usage = b["avg_cpu_usage"] + (0.7 + 0.8 * severity) * t + self._scaled_noise(n, 5.5, profile)
+        avg_cpu_usage = b["avg_cpu_usage"] + (0.45 + 0.55 * severity) * t + self._scaled_noise(n, 5.5, profile)
         request_rate = b["request_rate"] + self._scaled_noise(n, 7.0, profile)
-        latency = b["latency"] + 0.8 * np.maximum(avg_cpu_usage - 74, 0) + self._scaled_noise(n, 8.0, profile)
-        error_rate = b["error_rate"] + 0.0008 * np.maximum(avg_cpu_usage - 80, 0) + self._scaled_noise(n, 0.005, profile)
+        latency = b["latency"] + 0.55 * np.maximum(avg_cpu_usage - 76, 0) + self._scaled_noise(n, 8.0, profile)
+        error_rate = b["error_rate"] + 0.0005 * np.maximum(avg_cpu_usage - 82, 0) + self._scaled_noise(n, 0.005, profile)
         mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.014, profile)
         dependency_latency = b["dependency_latency"] + self._scaled_noise(n, 4.0, profile)
         upstream_error_rate = b["upstream_error_rate"] + self._scaled_noise(n, 0.004, profile)
@@ -424,15 +424,15 @@ class IncidentSequenceGenerator:
         center = int(profile["spike_center"])
         width = float(profile["spike_width"])
         severity = float(profile["severity"])
-        spike = np.exp(-0.5 * ((t - center) / width) ** 2) * (55 + 45 * severity)
+        spike = np.exp(-0.5 * ((t - center) / width) ** 2) * (38 + 30 * severity)
 
         request_rate = b["request_rate"] + spike + self._scaled_noise(n, 10.0, profile)
-        avg_cpu_usage = b["avg_cpu_usage"] + 0.14 * spike + self._scaled_noise(n, 5.0, profile)
-        latency = b["latency"] + 0.15 * spike + self._scaled_noise(n, 10.0, profile)
-        error_rate = b["error_rate"] + 0.00025 * spike + self._scaled_noise(n, 0.005, profile)
+        avg_cpu_usage = b["avg_cpu_usage"] + 0.10 * spike + self._scaled_noise(n, 5.0, profile)
+        latency = b["latency"] + 0.10 * spike + self._scaled_noise(n, 10.0, profile)
+        error_rate = b["error_rate"] + 0.00016 * spike + self._scaled_noise(n, 0.005, profile)
         mem_growth = b["mem_growth"] + self._scaled_noise(n, 0.014, profile)
-        dependency_latency = b["dependency_latency"] + 0.03 * spike + self._scaled_noise(n, 4.0, profile)
-        upstream_error_rate = b["upstream_error_rate"] + 0.0001 * spike + self._scaled_noise(n, 0.005, profile)
+        dependency_latency = b["dependency_latency"] + 0.02 * spike + self._scaled_noise(n, 4.0, profile)
+        upstream_error_rate = b["upstream_error_rate"] + 0.00006 * spike + self._scaled_noise(n, 0.005, profile)
         timeout_log_count = (latency > np.percentile(latency, 80)).astype(int)
         oom_log_count = np.zeros(n, dtype=int)
 
