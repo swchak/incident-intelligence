@@ -70,6 +70,7 @@ def build_temporal_feature_dataset(sequence_df: pd.DataFrame) -> pd.DataFrame:
 
     rows: List[Dict] = []
     for incident_id, group in df.groupby("incident_id", sort=True):
+    
         row: Dict[str, float | str | int] = {
             "incident_id": int(incident_id),
             "root_cause_label": str(group["root_cause_label"].iloc[0]),
@@ -103,5 +104,4 @@ def build_temporal_feature_dataset(sequence_df: pd.DataFrame) -> pd.DataFrame:
         row["timeout_total"] = int(group["timeout_log_count"].sum())
 
         rows.append(row)
-
     return pd.DataFrame(rows)

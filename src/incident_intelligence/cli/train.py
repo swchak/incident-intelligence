@@ -187,6 +187,8 @@ def main() -> None:
     result = run_training_for_dataset_kind(
         dataset_kind=dataset_kind,
         cfg=cfg,
+        train_path=settings.train,
+        val_path=settings.val,
     )
 
     # Emit a concise terminal summary for humans while richer artifacts are

@@ -26,7 +26,7 @@ The configuration sections currently defined are:
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, TypeVar
 import tomllib
@@ -147,6 +147,16 @@ class SequenceGeneratorCLIConfig:
     sequence_length: int = 20
     random_seed: int = 42
     output: str = "data/raw/incidents_sequence_raw.csv"
+    label_probs: dict[str, float] = field(
+        default_factory=lambda: {
+            "memory_leak": 0.18,
+            "bad_deployment": 0.15,
+            "external_dependency_failure": 0.17,
+            "cpu_saturation": 0.16,
+            "traffic_spike": 0.14,
+            "normal": 0.20,
+        }
+    )
 
 
 @dataclass

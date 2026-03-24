@@ -40,6 +40,7 @@ n_incidents = 5000
 sequence_length = 20
 random_seed = 42
 output = "data/raw/incidents_sequence_raw.csv"
+label_probs = { memory_leak = 0.18, bad_deployment = 0.15, external_dependency_failure = 0.17, cpu_saturation = 0.16, traffic_spike = 0.14, normal = 0.20 }
 
 [tool.incident_intelligence.temporal_features]
 input = "data/raw/incidents_sequence_raw.csv"

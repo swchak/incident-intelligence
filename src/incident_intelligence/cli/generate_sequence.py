@@ -4,8 +4,7 @@ generate_sequence.py
 Command-line interface for generating synthetic incident sequence datasets.
 
 This script loads configuration from a config file and CLI overrides,
-constructs a SequenceGeneratorConfig, and runs the sequence dataset
-generation pipeline.
+and runs the sequence dataset generation pipeline.
 
 The pipeline produces:
 
@@ -24,10 +23,7 @@ from incident_intelligence.config import (
     load_config,
     merge_cli_args,
 )
-from incident_intelligence.data.generate_sequence import (
-    SequenceGeneratorConfig,
-    generate_sequence_dataset,
-)
+from incident_intelligence.data.generate_sequence import generate_sequence_dataset
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,9 +63,8 @@ def main() -> None:
     1. Parse CLI arguments
     2. Load default configuration
     3. Merge CLI overrides into configuration
-    4. Construct a SequenceGeneratorConfig object
-    5. Generate the sequence dataset and save it to disk
-    6. Print the resulting file path
+    4. Generate the sequence dataset and save it to disk
+    5. Print the resulting file path
     """
     # Parse command-line arguments
     parser = build_parser()
@@ -81,18 +76,12 @@ def main() -> None:
         load_config(SequenceGeneratorCLIConfig, "sequence_generator"),
     )
 
-    # Convert CLI settings into the internal generation configuration
-    cfg = SequenceGeneratorConfig(
+    # Run sequence dataset generation pipeline
+    df = generate_sequence_dataset(
         n_incidents=settings.n_incidents,
         sequence_length=settings.sequence_length,
         random_seed=settings.random_seed,
-    )
-
-    # Run sequence dataset generation pipeline
-    df = generate_sequence_dataset(
-        n_incidents=cfg.n_incidents,
-        sequence_length=cfg.sequence_length,
-        random_seed=cfg.random_seed,
+        label_probs=settings.label_probs,
     )
 
     output_path = Path(settings.output)

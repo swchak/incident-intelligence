@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 import numpy as np
 import pandas as pd
@@ -21,12 +21,23 @@ class SequenceGeneratorConfig:
     n_incidents: int = 5000
     sequence_length: int = 20
     random_seed: int = 42
+    label_probs: dict[str, float] = field(
+        default_factory=lambda: {
+            "memory_leak": 0.18,
+            "bad_deployment": 0.15,
+            "external_dependency_failure": 0.17,
+            "cpu_saturation": 0.16,
+            "traffic_spike": 0.14,
+            "normal": 0.20,
+        }
+    )
 
 
 class IncidentSequenceGenerator:
     def __init__(self, config: SequenceGeneratorConfig) -> None:
         self.config = config
         self.rng = np.random.default_rng(config.random_seed)
+        self.label_probs = self._validate_label_probs(config.label_probs)
 
     def generate(self) -> pd.DataFrame:
         rows: List[Dict] = []
@@ -44,9 +55,29 @@ class IncidentSequenceGenerator:
         return df
 
     def _sample_label(self) -> str:
-        # Replace with your class-config-driven probabilities later
-        probs = np.array([0.18, 0.15, 0.17, 0.16, 0.14, 0.20])
-        return self.rng.choice(ROOT_CAUSES, p=probs)
+        return self.rng.choice(ROOT_CAUSES, p=self.label_probs)
+
+    def _validate_label_probs(
+        self,
+        label_probs: dict[str, float],
+    ) -> np.ndarray:
+        unknown = sorted(set(label_probs) - set(ROOT_CAUSES))
+        missing = [label for label in ROOT_CAUSES if label not in label_probs]
+        if unknown:
+            raise ValueError(f"label_probs contains unknown root causes: {unknown}")
+        if missing:
+            raise ValueError(
+                "label_probs is missing required root causes: "
+                f"{missing}"
+            )
+
+        probs = np.asarray([label_probs[label] for label in ROOT_CAUSES], dtype=float)
+        if np.any(probs < 0):
+            raise ValueError("label_probs cannot contain negative values")
+        total = probs.sum()
+        if total <= 0:
+            raise ValueError("label_probs must sum to a positive value")
+        return probs / total
 
     def _make_incident_profile(self, label: str, sequence_length: int) -> Dict[str, float | int | str]:
         lower = max(2, int(sequence_length * 0.2))
@@ -80,6 +111,7 @@ class IncidentSequenceGenerator:
     ) -> List[Dict]:
         baseline = self._make_baseline()
         profile = self._make_incident_profile(label, sequence_length)
+        print(f"Generating incident {incident_id} with label '{label}' and profile: {profile}")
         t = np.arange(sequence_length)
 
         if label == "memory_leak":
@@ -121,7 +153,17 @@ class IncidentSequenceGenerator:
                     "timeout_log_count": int(metrics["timeout_log_count"][i]),
                 }
             )
-
+        print(f"Generated incident {incident_id} with label '{label}'")
+        for row in rows:
+            row["avg_cpu_usage"] = round(row["avg_cpu_usage"], 2)
+            row["mem_growth"] = round(row["mem_growth"], 5)
+            row["request_rate"] = round(row["request_rate"], 2)
+            row["error_rate"] = round(row["error_rate"], 5)
+            row["latency"] = round(row["latency"], 2)
+            row["upstream_error_rate"] = round(row["upstream_error_rate"], 5)
+            row["dependency_latency"] = round(row["dependency_latency"], 2)
+            row["timeout_log_count"] = int(row["timeout_log_count"])
+            print(f"  Timestep {row['timestep']}: CPU {row['avg_cpu_usage']}%, Mem Growth {row['mem_growth']}, "f"Req Rate {row['request_rate']}, Error Rate {row['error_rate']}, Latency {row['latency']}ms, "f"Upstream Error Rate {row['upstream_error_rate']}, Dependency Latency {row['dependency_latency']}ms, Timeout Logs {row['timeout_log_count']}")
         return rows
 
     def _make_baseline(self) -> Dict[str, float]:
@@ -466,11 +508,20 @@ def generate_sequence_dataset(
     n_incidents: int = 5000,
     sequence_length: int = 20,
     random_seed: int = 42,
+    label_probs: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     config = SequenceGeneratorConfig(
         n_incidents=n_incidents,
         sequence_length=sequence_length,
         random_seed=random_seed,
+        label_probs=label_probs or {
+            "memory_leak": 0.18,
+            "bad_deployment": 0.15,
+            "external_dependency_failure": 0.17,
+            "cpu_saturation": 0.16,
+            "traffic_spike": 0.14,
+            "normal": 0.20,
+        },
     )
     generator = IncidentSequenceGenerator(config)
     return generator.generate()

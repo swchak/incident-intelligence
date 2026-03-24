@@ -130,6 +130,9 @@ def load_df(path: str | Path) -> pd.DataFrame:
 
 def load_training_data(
     dataset_kind: str = "snapshot",
+    *,
+    train_path: str | Path | None = None,
+    val_path: str | Path | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load train and validation datasets based on dataset kind.
@@ -143,17 +146,20 @@ def load_training_data(
     Returns:
         (train_df, val_df)
     """
-    if dataset_kind == "snapshot":
-        train_path = "data/processed/incident_snapshot_train.csv"
-        val_path = "data/processed/incident_snapshot_val.csv"
-    elif dataset_kind == "temporal":
-        train_path = "data/processed/incident_temporal_train.csv"
-        val_path = "data/processed/incident_temporal_val.csv"
-    else:
-        raise ValueError(
-            f"Unsupported dataset_kind='{dataset_kind}'. "
-            "Expected one of: ['snapshot', 'temporal']"
-        )
+    if train_path is None or val_path is None:
+        if dataset_kind == "snapshot":
+            default_train_path = "data/processed/incident_snapshot_train.csv"
+            default_val_path = "data/processed/incident_snapshot_val.csv"
+        elif dataset_kind == "temporal":
+            default_train_path = "data/processed/incident_temporal_train.csv"
+            default_val_path = "data/processed/incident_temporal_val.csv"
+        else:
+            raise ValueError(
+                f"Unsupported dataset_kind='{dataset_kind}'. "
+                "Expected one of: ['snapshot', 'temporal']"
+            )
+        train_path = train_path or default_train_path
+        val_path = val_path or default_val_path
 
     train_df = load_df(train_path)
     val_df = load_df(val_path)
@@ -462,10 +468,16 @@ def run_training_for_dataset_kind(
     *,
     cfg: TrainValidateConfig,
     base_cfg: Optional[BaselineTrainConfig] = None,
+    train_path: str | Path | None = None,
+    val_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     """
     Load the standard processed train/validation datasets for a given dataset kind
     and run training.
     """
-    train_df, val_df = load_training_data(dataset_kind=dataset_kind)
+    train_df, val_df = load_training_data(
+        dataset_kind=dataset_kind,
+        train_path=train_path,
+        val_path=val_path,
+    )
     return train_and_validate(train_df, val_df, cfg=cfg, base_cfg=base_cfg)

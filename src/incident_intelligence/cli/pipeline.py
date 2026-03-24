@@ -158,6 +158,7 @@ def _run_temporal_generation() -> None:
         n_incidents=seq_settings.n_incidents,
         sequence_length=seq_settings.sequence_length,
         random_seed=seq_settings.random_seed,
+        label_probs=seq_settings.label_probs,
     )
 
     sequence_output = Path(seq_settings.output)
