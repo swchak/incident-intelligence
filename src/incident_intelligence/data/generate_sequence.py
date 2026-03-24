@@ -111,7 +111,6 @@ class IncidentSequenceGenerator:
     ) -> List[Dict]:
         baseline = self._make_baseline()
         profile = self._make_incident_profile(label, sequence_length)
-        print(f"Generating incident {incident_id} with label '{label}' and profile: {profile}")
         t = np.arange(sequence_length)
 
         if label == "memory_leak":
@@ -153,17 +152,6 @@ class IncidentSequenceGenerator:
                     "timeout_log_count": int(metrics["timeout_log_count"][i]),
                 }
             )
-        print(f"Generated incident {incident_id} with label '{label}'")
-        for row in rows:
-            row["avg_cpu_usage"] = round(row["avg_cpu_usage"], 2)
-            row["mem_growth"] = round(row["mem_growth"], 5)
-            row["request_rate"] = round(row["request_rate"], 2)
-            row["error_rate"] = round(row["error_rate"], 5)
-            row["latency"] = round(row["latency"], 2)
-            row["upstream_error_rate"] = round(row["upstream_error_rate"], 5)
-            row["dependency_latency"] = round(row["dependency_latency"], 2)
-            row["timeout_log_count"] = int(row["timeout_log_count"])
-            print(f"  Timestep {row['timestep']}: CPU {row['avg_cpu_usage']}%, Mem Growth {row['mem_growth']}, "f"Req Rate {row['request_rate']}, Error Rate {row['error_rate']}, Latency {row['latency']}ms, "f"Upstream Error Rate {row['upstream_error_rate']}, Dependency Latency {row['dependency_latency']}ms, Timeout Logs {row['timeout_log_count']}")
         return rows
 
     def _make_baseline(self) -> Dict[str, float]:
