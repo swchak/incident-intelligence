@@ -125,7 +125,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
-        "http://127.0.0.1:8000/api/pipeline/run",
+        "/api/pipeline/run",
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" }
@@ -142,7 +142,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
-        "http://127.0.0.1:8000/api/dashboard/summary/temporal",
+        "/api/dashboard/summary/temporal",
         undefined
       );
     });

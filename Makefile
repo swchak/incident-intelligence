@@ -6,6 +6,7 @@
 	explain-local explain-local-temporal \
 	test test-backend test-frontend \
 	api web-install web-dev \
+	docker-build docker-up docker-down \
 	pipeline pipeline-temporal pipeline-temporal-fast \
 	clean
 
@@ -37,6 +38,9 @@ help:
 	@echo "  api                     - run the FastAPI dashboard backend"
 	@echo "  web-install             - install frontend dependencies"
 	@echo "  web-dev                 - run the Vite dashboard frontend"
+	@echo "  docker-build            - build API and frontend deployment images"
+	@echo "  docker-up               - start the full stack with docker compose"
+	@echo "  docker-down             - stop the docker compose stack"
 	@echo "  pipeline                - run the full snapshot pipeline"
 	@echo "  pipeline-temporal       - run the full temporal pipeline"
 	@echo "  pipeline-temporal-fast  - run the temporal pipeline with faster training defaults"
@@ -101,6 +105,15 @@ web-install:
 
 web-dev:
 	cd web && $(NPM) run dev
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up --build
+
+docker-down:
+	docker compose down
 
 pipeline:
 	$(PY) -m incident_intelligence.cli.pipeline $(PIPELINE_ARGS)

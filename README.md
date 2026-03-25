@@ -99,6 +99,65 @@ The dashboard is intended to demonstrate the ML pipeline end to end rather than 
 - browsing generated plots, reports, and explainability outputs
 - inspecting background job logs from the UI
 
+## CI/CD And Deployment
+
+The repository now includes:
+
+- CI workflow: [.github/workflows/ci.yml](/Users/swethachakravarthy/Projects/incident-intelligence/.github/workflows/ci.yml)
+- container publish workflow: [.github/workflows/deploy.yml](/Users/swethachakravarthy/Projects/incident-intelligence/.github/workflows/deploy.yml)
+- API container image: [Dockerfile.api](/Users/swethachakravarthy/Projects/incident-intelligence/Dockerfile.api)
+- frontend container image: [Dockerfile.web](/Users/swethachakravarthy/Projects/incident-intelligence/Dockerfile.web)
+- local/full-stack deployment config: [docker-compose.yml](/Users/swethachakravarthy/Projects/incident-intelligence/docker-compose.yml)
+
+### CI
+
+The CI workflow runs on pull requests and pushes to `main` and does the following:
+
+- installs Python and Node dependencies
+- runs backend and frontend tests with `make test`
+- builds the frontend bundle
+- builds both Docker images to catch deployment regressions early
+
+### CD
+
+The publish workflow runs on pushes to `main` and on manual dispatch. It builds and pushes two container images to GitHub Container Registry:
+
+- `ghcr.io/<owner>/<repo>/api`
+- `ghcr.io/<owner>/<repo>/web`
+
+### Local Deployment
+
+You can run the full stack locally with Docker:
+
+```bash
+make docker-build
+make docker-up
+```
+
+Default local deployment URLs:
+
+- frontend: `http://localhost:8080`
+- backend API: `http://localhost:8000`
+
+To stop the stack:
+
+```bash
+make docker-down
+```
+
+### Deployment Smoke Test Checklist
+
+After starting the stack, a quick local verification pass is:
+
+1. Open the frontend at `http://localhost:8080` or your overridden web port.
+2. Confirm the API health endpoint responds at `http://localhost:8000/api/health`.
+3. Confirm the dashboard summary loads without an error banner.
+4. Switch between `snapshot` and `temporal` in the UI and verify both views load.
+5. Start a pipeline job from the dashboard and confirm:
+   - a new job appears in the job list
+   - the selected job log begins updating
+6. Stop the stack with `make docker-down`.
+
 ### Backend API Endpoints
 
 Current backend endpoints include:
@@ -218,6 +277,9 @@ make pipeline-temporal-fast
 make api
 make web-install
 make web-dev
+make docker-build
+make docker-up
+make docker-down
 ```
 
 Snapshot is the default Makefile workflow, so `make pipeline` runs the snapshot pipeline and `make pipeline-temporal` runs the temporal one.

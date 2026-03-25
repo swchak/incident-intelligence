@@ -29,6 +29,13 @@ DatasetKind = Literal["snapshot", "temporal"]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _cors_origins() -> list[str]:
+    value = os.getenv("API_CORS_ORIGINS", "*")
+    if value.strip() == "*":
+        return ["*"]
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 class PipelineRunRequest(BaseModel):
     dataset_kind: DatasetKind = "snapshot"
     fast_mode: bool = False
@@ -222,7 +229,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -322,8 +329,8 @@ def get_pipeline_job_log(job_id: str) -> dict[str, str]:
 def main() -> None:
     uvicorn.run(
         "incident_intelligence.api.app:app",
-        host="127.0.0.1",
-        port=8000,
+        host=os.getenv("API_HOST", "127.0.0.1"),
+        port=int(os.getenv("API_PORT", "8000")),
         reload=False,
     )
 
