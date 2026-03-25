@@ -267,17 +267,18 @@ export default function App() {
         title: item.path.split("/").slice(-1)[0].replace(/_/g, " ").replace(".png", "")
       }));
   }, [artifactEntries]);
+  const featuredVisual = visuals[0] || null;
 
   const headlineStats = [
     {
       title: "Best F1 Macro",
-      value: bestModel ? formatScore(bestModel.f1_macro) : "n/a",
-      subtitle: bestModel ? bestModel.model_name : "no evaluation yet"
+      value: bestModel ? formatScore(bestModel.f1_macro) : "Run a pipeline",
+      subtitle: bestModel ? bestModel.model_name : "No evaluation results yet"
     },
     {
       title: "Tracked Jobs",
       value: jobs.length,
-      subtitle: jobs.length ? "persisted run history" : "no runs yet"
+      subtitle: jobs.length ? "Persisted run history" : "No runs recorded yet"
     },
     {
       title: "Artifacts",
@@ -320,14 +321,30 @@ export default function App() {
                 className={datasetKind === kind ? "active" : ""}
                 onClick={() => setDatasetKind(kind)}
               >
-                {kind}
-              </button>
-            ))}
+              {kind}
+            </button>
+          ))}
           </div>
-          <div className="hero-stats">
+          <div className="hero-stats compact-grid">
             {headlineStats.map((item) => (
               <StatCard key={item.title} title={item.title} value={item.value} subtitle={item.subtitle} />
             ))}
+          </div>
+          <div className="card featured-card">
+            <div className="section-title">Featured Result</div>
+            {featuredVisual ? (
+              <figure className="featured-visual">
+                <img alt={featuredVisual.title} src={fileUrl(featuredVisual.path)} />
+                <figcaption>
+                  <div className="visual-title">{featuredVisual.title}</div>
+                  <code>{featuredVisual.path}</code>
+                </figcaption>
+              </figure>
+            ) : (
+              <div className="empty-state">
+                Run a pipeline to surface confusion matrices, model comparison plots, and feature-importance visuals here.
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -437,14 +454,20 @@ export default function App() {
       <section className="grid">
         <div className="card">
           <div className="section-title">Evaluation Visuals</div>
-          <VisualGallery visuals={visuals} />
+          {visuals.length ? (
+            <VisualGallery visuals={visuals.slice(1)} />
+          ) : (
+            <div className="empty-state">
+              No evaluation visuals yet. Start a run to populate this gallery with confusion matrices and feature importance plots.
+            </div>
+          )}
         </div>
       </section>
 
       <section className="grid two-up">
         <div className="card">
           <div className="section-title">Selected Job Log</div>
-          <pre className="log-view">{selectedJobLog || "No log selected yet."}</pre>
+          <pre className="log-view">{selectedJobLog || "No log selected yet. Launch a pipeline run to watch logs stream here."}</pre>
         </div>
         <div className="card">
           <div className="section-title">Artifact Inventory</div>
