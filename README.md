@@ -9,6 +9,99 @@ The repository now supports two workflows:
 
 The project covers dataset generation, model training, evaluation, global explainability, and local per-incident explainability through a CLI-first workflow, and now also includes a demo dashboard with a FastAPI backend and React frontend.
 
+## Why This Project
+
+I built this project to explore a problem that sits between software engineering, production support, and applied machine learning: how to distinguish likely incident causes from noisy telemetry patterns.
+
+This is the kind of problem that matters because:
+
+- many incidents look similar at first glance
+- the same symptom can come from different causes
+- static metrics alone often miss how an incident evolved over time
+- explainability matters if a prediction is going to help an engineer investigate faster
+
+For portfolio purposes, the goal was not just to train a classifier. The goal was to show end-to-end engineering ownership across:
+
+- data generation and feature design
+- model training and evaluation
+- explainability
+- productization through APIs and a dashboard
+- testing, CI, and deployment packaging
+
+## Why Temporal Workflow Exists
+
+The snapshot workflow is a useful baseline, but incident diagnosis is often a time-pattern problem rather than a single-row classification problem.
+
+Examples:
+
+- a memory leak is usually a trend, not just “memory is high”
+- a deployment issue often looks like a changepoint
+- a traffic spike is defined by burst shape and propagation
+- a dependency failure can cascade through latency and upstream-error relationships over time
+
+That is why this repository supports two workflows:
+
+- `snapshot` for a fast, simpler baseline
+- `temporal` for sequence-aware feature engineering that captures slopes, deltas, spike behavior, AUC, and cross-metric relationships
+
+## Tradeoffs Explored
+
+A few of the deliberate tradeoffs in this project are:
+
+- synthetic data vs real production data
+  - synthetic data makes the project reproducible and safe to share
+  - it also means realism has to be designed intentionally
+- snapshot vs temporal modeling
+  - snapshot is easier to train and explain
+  - temporal is more expressive, but slower and easier to overfit if the generator is too clean
+- explainability vs speed
+  - SHAP and local explanations add value for investigation
+  - they also increase runtime and implementation complexity
+- CLI-first workflow vs app-first workflow
+  - the CLI keeps the pipeline scriptable and testable
+  - the dashboard makes it easier to demonstrate and inspect results interactively
+
+## What Is Synthetic Versus Production-Like
+
+This repository uses synthetic incident data throughout. That is intentional.
+
+Synthetic:
+
+- the raw telemetry and incident labels are generated locally
+- the incident classes are designed, not collected from real systems
+- the evaluation environment is controlled and reproducible
+
+Production-like:
+
+- the workflow structure mirrors a real ML system
+- there are separate train/validation/eval datasets
+- there are multiple model families, metrics, reports, plots, and explanation outputs
+- there is a backend API, frontend dashboard, test coverage, CI, and deployment packaging
+
+So the repo is best understood as a realistic engineering demo of an ML workflow, not as a claim of production-grade incident detection accuracy.
+
+## What I Learned
+
+The biggest practical lessons from this project were:
+
+- dataset realism matters more than headline accuracy
+- temporal features can be very strong, but they can also make synthetic tasks unrealistically easy
+- artifact naming and dataset-kind separation become important quickly once snapshot and temporal flows coexist
+- explainability features are valuable, but they require careful handling around model compatibility, runtime cost, and user experience
+- once a project grows beyond a script, packaging, tests, CI, deployment, and presentation matter just as much as the model code
+
+## Visual Walkthrough
+
+Architecture and workflow:
+
+![Synthetic incident pipeline](docs/images/synthetic_incident_pipeline.png)
+
+Sample evaluation and explainability outputs:
+
+![Confusion matrix example](docs/images/confusion_matrix.png)
+
+![Global feature importance example](docs/images/sample_global_importance.png)
+
 ## What The Project Does
 
 The pipeline simulates production-style incidents using signals such as:
@@ -102,6 +195,8 @@ The dashboard is intended to demonstrate the ML pipeline end to end rather than 
 - viewing latest metrics and artifacts
 - browsing generated plots, reports, and explainability outputs
 - inspecting background job logs from the UI
+- persisting pipeline run history across backend restarts
+- surfacing evaluation visuals like confusion matrices and feature importance plots directly in the UI
 
 ## CI And Deployment
 

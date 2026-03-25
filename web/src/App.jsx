@@ -12,12 +12,29 @@ async function fetchJson(path, options) {
   return response.json();
 }
 
+function formatScore(value) {
+  return typeof value === "number" ? value.toFixed(4) : "n/a";
+}
+
+function fileUrl(path) {
+  return `${API_BASE_URL}/api/files/${path}`;
+}
+
 function StatCard({ title, value, subtitle }) {
   return (
     <div className="card stat-card">
       <div className="stat-title">{title}</div>
       <div className="stat-value">{value}</div>
       {subtitle ? <div className="stat-subtitle">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function NarrativeCard({ title, body }) {
+  return (
+    <div className="narrative-card">
+      <div className="narrative-title">{title}</div>
+      <div className="narrative-body">{body}</div>
     </div>
   );
 }
@@ -74,10 +91,6 @@ function MetricTable({ rows }) {
   );
 }
 
-function formatScore(value) {
-  return typeof value === "number" ? value.toFixed(4) : "n/a";
-}
-
 function JobList({ jobs, onSelect, selectedJobId }) {
   if (!jobs.length) {
     return <div className="muted">No pipeline jobs started yet.</div>;
@@ -98,7 +111,28 @@ function JobList({ jobs, onSelect, selectedJobId }) {
           </div>
           <div className="job-id">{job.job_id}</div>
           <div className="job-meta">{job.created_at}</div>
+          {job.finished_at ? <div className="job-finished">finished {job.finished_at}</div> : null}
         </button>
+      ))}
+    </div>
+  );
+}
+
+function VisualGallery({ visuals }) {
+  if (!visuals.length) {
+    return <div className="muted">No confusion matrices or feature importance plots found yet.</div>;
+  }
+
+  return (
+    <div className="visual-grid">
+      {visuals.map((visual) => (
+        <figure className="visual-card" key={visual.path}>
+          <img alt={visual.title} src={fileUrl(visual.path)} />
+          <figcaption>
+            <div className="visual-title">{visual.title}</div>
+            <code>{visual.path}</code>
+          </figcaption>
+        </figure>
       ))}
     </div>
   );
@@ -215,29 +249,86 @@ export default function App() {
     })) || [];
   }, [summary]);
 
+  const bestModel = useMemo(() => {
+    if (!modelRows.length) {
+      return null;
+    }
+    return [...modelRows].sort((left, right) => (right.f1_macro ?? -1) - (left.f1_macro ?? -1))[0];
+  }, [modelRows]);
+
   const artifactEntries = artifacts?.artifacts || {};
+  const visuals = useMemo(() => {
+    const plotFiles = artifactEntries.plots_dir || [];
+    return plotFiles
+      .filter((item) => /confusion_matrix|feature_importance|model_comparison/.test(item.path))
+      .slice(0, 6)
+      .map((item) => ({
+        path: item.path,
+        title: item.path.split("/").slice(-1)[0].replace(/_/g, " ").replace(".png", "")
+      }));
+  }, [artifactEntries]);
+
+  const headlineStats = [
+    {
+      title: "Best F1 Macro",
+      value: bestModel ? formatScore(bestModel.f1_macro) : "n/a",
+      subtitle: bestModel ? bestModel.model_name : "no evaluation yet"
+    },
+    {
+      title: "Tracked Jobs",
+      value: jobs.length,
+      subtitle: jobs.length ? "persisted run history" : "no runs yet"
+    },
+    {
+      title: "Artifacts",
+      value: (artifactEntries.plots_dir?.length || 0) + (artifactEntries.reports_dir?.length || 0),
+      subtitle: `${datasetKind} plots and reports`
+    }
+  ];
 
   return (
     <div className="app-shell">
       <header className="hero">
-        <div>
+        <div className="hero-copy">
           <div className="eyebrow">Incident Intelligence</div>
-          <h1>Pipeline Demo Dashboard</h1>
+          <h1>Root-cause modeling, from synthetic telemetry to explainable results.</h1>
           <p>
-            Run the snapshot or temporal ML workflow, inspect artifacts, and track pipeline jobs from one place.
+            This dashboard demonstrates a full ML workflow for incident root-cause analysis: generate data,
+            train baseline models, compare snapshot versus temporal features, and inspect the artifacts those runs produce.
           </p>
+          <div className="narrative-grid">
+            <NarrativeCard
+              title="Problem"
+              body="Distinguish deployment, dependency, traffic, CPU, and memory failure modes from telemetry patterns."
+            />
+            <NarrativeCard
+              title="Why Temporal"
+              body="Many incidents are about shape over time, not just one static row of metrics."
+            />
+            <NarrativeCard
+              title="What You Can Inspect"
+              body="Evaluation tables, confusion matrices, feature importance plots, explainability outputs, and job logs."
+            />
+          </div>
         </div>
-        <div className="dataset-toggle">
-          {DATASET_KINDS.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              className={datasetKind === kind ? "active" : ""}
-              onClick={() => setDatasetKind(kind)}
-            >
-              {kind}
-            </button>
-          ))}
+        <div className="hero-side">
+          <div className="dataset-toggle">
+            {DATASET_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className={datasetKind === kind ? "active" : ""}
+                onClick={() => setDatasetKind(kind)}
+              >
+                {kind}
+              </button>
+            ))}
+          </div>
+          <div className="hero-stats">
+            {headlineStats.map((item) => (
+              <StatCard key={item.title} title={item.title} value={item.value} subtitle={item.subtitle} />
+            ))}
+          </div>
         </div>
       </header>
 
@@ -340,6 +431,13 @@ export default function App() {
         <div className="card">
           <div className="section-title">Pipeline Jobs</div>
           <JobList jobs={jobs} onSelect={setSelectedJobId} selectedJobId={selectedJobId} />
+        </div>
+      </section>
+
+      <section className="grid">
+        <div className="card">
+          <div className="section-title">Evaluation Visuals</div>
+          <VisualGallery visuals={visuals} />
         </div>
       </section>
 

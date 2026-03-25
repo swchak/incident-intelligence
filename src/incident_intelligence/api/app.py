@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import uuid
+from dataclasses import asdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -27,6 +29,8 @@ from incident_intelligence.modeling.train import with_dataset_suffix, with_paren
 
 DatasetKind = Literal["snapshot", "temporal"]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+API_RUNS_DIR = PROJECT_ROOT / "artifacts" / "api_runs"
+JOBS_STATE_PATH = API_RUNS_DIR / "jobs.json"
 
 
 def _cors_origins() -> list[str]:
@@ -71,7 +75,23 @@ class PipelineJob:
     return_code: int | None = None
 
 
-_JOBS: dict[str, PipelineJob] = {}
+def _load_jobs() -> dict[str, PipelineJob]:
+    if not JOBS_STATE_PATH.exists():
+        return {}
+    raw_jobs = json.loads(JOBS_STATE_PATH.read_text(encoding="utf-8"))
+    return {
+        item["job_id"]: PipelineJob(**item)
+        for item in raw_jobs
+    }
+
+
+def _save_jobs() -> None:
+    API_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    payload = [asdict(job) for job in sorted(_JOBS.values(), key=lambda item: item.created_at, reverse=True)]
+    JOBS_STATE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+_JOBS: dict[str, PipelineJob] = _load_jobs()
 _JOBS_LOCK = threading.Lock()
 
 
@@ -182,6 +202,7 @@ def _run_pipeline_job(job_id: str) -> None:
         job.started_at = datetime.now(timezone.utc).isoformat()
         command = list(job.command)
         log_path = Path(job.log_path)
+        _save_jobs()
 
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", str(PROJECT_ROOT / "src"))
@@ -205,6 +226,7 @@ def _run_pipeline_job(job_id: str) -> None:
         job.return_code = process.returncode
         job.finished_at = datetime.now(timezone.utc).isoformat()
         job.status = "completed" if process.returncode == 0 else "failed"
+        _save_jobs()
 
 
 def _job_response(job: PipelineJob) -> PipelineJobResponse:
@@ -278,10 +300,24 @@ def artifacts(dataset_kind: DatasetKind) -> dict[str, object]:
     }
 
 
+@app.get("/api/files/{file_path:path}")
+def get_project_file(file_path: str) -> FileResponse:
+    requested = (PROJECT_ROOT / file_path).resolve()
+    allowed_roots = [
+        (PROJECT_ROOT / "artifacts").resolve(),
+        (PROJECT_ROOT / "docs" / "images").resolve(),
+    ]
+    if not any(root == requested or root in requested.parents for root in allowed_roots):
+        raise HTTPException(status_code=403, detail="File path is not allowed")
+    if not requested.exists() or not requested.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    return FileResponse(requested)
+
+
 @app.post("/api/pipeline/run", response_model=PipelineJobResponse)
 def run_pipeline(request: PipelineRunRequest) -> PipelineJobResponse:
     job_id = uuid.uuid4().hex
-    log_dir = PROJECT_ROOT / "artifacts" / "api_runs"
+    log_dir = API_RUNS_DIR
     log_path = log_dir / f"{job_id}.log"
     job = PipelineJob(
         job_id=job_id,
@@ -291,6 +327,7 @@ def run_pipeline(request: PipelineRunRequest) -> PipelineJobResponse:
     )
     with _JOBS_LOCK:
         _JOBS[job_id] = job
+        _save_jobs()
 
     worker = threading.Thread(target=_run_pipeline_job, args=(job_id,), daemon=True)
     worker.start()

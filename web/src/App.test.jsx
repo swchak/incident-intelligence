@@ -57,7 +57,10 @@ describe("App", () => {
         return okJson({
           artifacts: {
             train_metrics: [{ path: "artifacts/metrics/train_val_results.json" }],
-            plots_dir: [],
+            plots_dir: [
+              { path: "artifacts/plots/confusion_matrix_best_model.png" },
+              { path: "artifacts/plots/feature_importance_best_model.png" }
+            ],
             reports_dir: [],
             explain_dir: []
           }
@@ -104,13 +107,14 @@ describe("App", () => {
   it("renders snapshot summary and model metrics", async () => {
     render(<App />);
 
-    expect(screen.getByText("Pipeline Demo Dashboard")).toBeInTheDocument();
+    expect(screen.getByText(/Root-cause modeling, from synthetic telemetry to explainable results\./)).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("Logistic_Regression_pipeline")).toBeInTheDocument();
+      expect(screen.getAllByText("Logistic_Regression_pipeline").length).toBeGreaterThan(0);
     });
 
     expect(screen.getByText("0.8100")).toBeInTheDocument();
+    expect(screen.getByText("confusion matrix best model")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("pipeline log output")).toBeInTheDocument();
