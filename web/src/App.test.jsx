@@ -107,7 +107,7 @@ describe("App", () => {
   it("renders snapshot summary and model metrics", async () => {
     render(<App />);
 
-    expect(screen.getByText(/Root-cause modeling, from synthetic telemetry to explainable results\./)).toBeInTheDocument();
+    expect(screen.getByText(/Incident root-cause modeling with explainable results\./)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getAllByText("Logistic_Regression_pipeline").length).toBeGreaterThan(0);

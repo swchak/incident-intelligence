@@ -292,7 +292,7 @@ export default function App() {
       <header className="hero">
         <div className="hero-copy">
           <div className="eyebrow">Incident Intelligence</div>
-          <h1>Root-cause modeling, from synthetic telemetry to explainable results.</h1>
+          <h1>Incident root-cause modeling with explainable results.</h1>
           <p>
             This dashboard demonstrates a full ML workflow for incident root-cause analysis: generate data,
             train baseline models, compare snapshot versus temporal features, and inspect the artifacts those runs produce.
