@@ -47,6 +47,8 @@ This path is driven by:
 - [src/incident_intelligence/cli/generator.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/cli/generator.py)
 - [src/incident_intelligence/data/generate_snapshot.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/data/generate_snapshot.py)
 
+Generated datasets under `data/` are local runtime outputs and are intentionally not committed to the repository.
+
 ### Temporal Workflow
 
 The temporal workflow generates incident sequences first, then builds aggregate temporal features from each sequence.
@@ -68,6 +70,8 @@ This path is driven by:
 - [src/incident_intelligence/data/generate_sequence.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/data/generate_sequence.py)
 - [src/incident_intelligence/data/temporal_features.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/data/temporal_features.py)
 - [src/incident_intelligence/data/splitters.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/data/splitters.py)
+
+Generated datasets under `data/` are local runtime outputs and are intentionally not committed to the repository.
 
 ## CLI Commands
 
@@ -319,6 +323,8 @@ Supported model aliases are:
 - `svm`
 
 ## Artifact Layout
+
+Runtime artifacts in `artifacts/` are generated locally by training, evaluation, explainability, and dashboard runs. The repository keeps only placeholder directories so the working tree stays clean and reproducible.
 
 Snapshot and temporal runs now write to separate default directories.
 
