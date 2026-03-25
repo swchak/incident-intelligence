@@ -7,7 +7,7 @@ The repository now supports two workflows:
 - `snapshot`: one row per incident with aggregate telemetry features
 - `temporal`: multi-step incident sequences that are transformed into temporal features before training
 
-The project covers dataset generation, model training, evaluation, global explainability, and local per-incident explainability through a CLI-first workflow.
+The project covers dataset generation, model training, evaluation, global explainability, and local per-incident explainability through a CLI-first workflow, and now also includes a demo dashboard with a FastAPI backend and React frontend.
 
 ## What The Project Does
 
@@ -83,6 +83,34 @@ The installed CLI entrypoints are defined in [pyproject.toml](/Users/swethachakr
 | `incident-explain` | Generate global explainability artifacts |
 | `incident-explain-local` | Generate local explainability artifacts for selected incidents |
 | `incident-pipeline` | Run the full snapshot or temporal workflow |
+| `incident-api` | Run the dashboard backend API |
+
+## Dashboard App
+
+The repository now includes a lightweight full-stack demo app:
+
+- Backend API: [src/incident_intelligence/api/app.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/api/app.py)
+- Frontend dashboard: [web/src/App.jsx](/Users/swethachakravarthy/Projects/incident-intelligence/web/src/App.jsx)
+
+The dashboard is intended to demonstrate the ML pipeline end to end rather than serve production traffic. It focuses on:
+
+- running snapshot and temporal pipeline jobs
+- viewing latest metrics and artifacts
+- browsing generated plots, reports, and explainability outputs
+- inspecting background job logs from the UI
+
+### Backend API Endpoints
+
+Current backend endpoints include:
+
+- `GET /api/health`
+- `GET /api/config`
+- `GET /api/dashboard/summary/{dataset_kind}`
+- `GET /api/artifacts/{dataset_kind}`
+- `POST /api/pipeline/run`
+- `GET /api/pipeline/jobs`
+- `GET /api/pipeline/jobs/{job_id}`
+- `GET /api/pipeline/jobs/{job_id}/log`
 
 ## Quickstart
 
@@ -95,19 +123,37 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-### 2. Run the snapshot pipeline
+### 2. Run the backend API
+
+```bash
+incident-api
+```
+
+### 3. Run the frontend dashboard
+
+```bash
+make web-install
+make web-dev
+```
+
+The default URLs are:
+
+- API: `http://127.0.0.1:8000`
+- Frontend: `http://127.0.0.1:5173`
+
+### 4. Run the snapshot pipeline from CLI
 
 ```bash
 incident-pipeline
 ```
 
-### 3. Run the temporal pipeline
+### 5. Run the temporal pipeline from CLI
 
 ```bash
 incident-pipeline --dataset-kind temporal
 ```
 
-For headless environments, this is often the safest form:
+For headless environments, the temporal pipeline is often safest with:
 
 ```bash
 MPLBACKEND=Agg incident-pipeline --dataset-kind temporal
@@ -169,6 +215,9 @@ make explain-temporal
 make explain-local-temporal
 make pipeline-temporal
 make pipeline-temporal-fast
+make api
+make web-install
+make web-dev
 ```
 
 Snapshot is the default Makefile workflow, so `make pipeline` runs the snapshot pipeline and `make pipeline-temporal` runs the temporal one.
@@ -302,12 +351,17 @@ incident-intelligence/
 │   └── class_config.json
 ├── notebooks/
 ├── src/incident_intelligence/
+│   ├── api/
 │   ├── cli/
 │   ├── data/
 │   ├── modeling/
 │   ├── config.py
 │   ├── settings.py
 │   └── __init__.py
+├── web/
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.js
 ├── Makefile
 ├── pyproject.toml
 ├── requirements.txt
@@ -317,8 +371,10 @@ incident-intelligence/
 ## Main Code Areas
 
 - CLI orchestration: [src/incident_intelligence/cli](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/cli)
+- Dashboard backend API: [src/incident_intelligence/api](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/api)
 - Data generation and temporal feature engineering: [src/incident_intelligence/data](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/data)
 - Model training, evaluation, and explainability: [src/incident_intelligence/modeling](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/modeling)
+- Dashboard frontend: [web](/Users/swethachakravarthy/Projects/incident-intelligence/web)
 
 ## Makefile Notes
 
