@@ -393,7 +393,7 @@ class IncidentSequenceGenerator:
         latency[change_point:] += 0.28 * (dependency_latency[change_point:] - b["dependency_latency"])
         error_rate[change_point:] += 0.15 * upstream_error_rate[change_point:]
         avg_cpu_usage[change_point:] += np.linspace(0.5, 2.5 + 2.0 * severity, n - change_point)
-        request_rate[change_point:] += self._noise(n, 2.0)
+        request_rate[change_point:] += self._noise(n - change_point, 2.0)
         error_rate[change_point:] += 0.10 * np.maximum(
             latency[change_point:] - b["latency"],
             0,
