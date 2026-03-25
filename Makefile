@@ -4,10 +4,12 @@
 	evaluate evaluate-temporal \
 	explain explain-temporal \
 	explain-local explain-local-temporal \
+	api web-install web-dev \
 	pipeline pipeline-temporal pipeline-temporal-fast \
 	clean
 
 PY ?= python
+NPM ?= npm
 TRAIN_ARGS ?=
 EVAL_ARGS ?=
 EXPLAIN_ARGS ?=
@@ -28,6 +30,9 @@ help:
 	@echo "  explain-temporal        - generate temporal global explainability artifacts"
 	@echo "  explain-local           - generate snapshot local explainability artifacts"
 	@echo "  explain-local-temporal  - generate temporal local explainability artifacts"
+	@echo "  api                     - run the FastAPI dashboard backend"
+	@echo "  web-install             - install frontend dependencies"
+	@echo "  web-dev                 - run the Vite dashboard frontend"
 	@echo "  pipeline                - run the full snapshot pipeline"
 	@echo "  pipeline-temporal       - run the full temporal pipeline"
 	@echo "  pipeline-temporal-fast  - run the temporal pipeline with faster training defaults"
@@ -75,6 +80,15 @@ explain-local:
 
 explain-local-temporal:
 	$(PY) -m incident_intelligence.cli.explain_local --dataset-kind temporal $(EXPLAIN_LOCAL_ARGS)
+
+api:
+	PYTHONPATH=src MPLBACKEND=Agg MPLCONFIGDIR=/tmp $(PY) -m incident_intelligence.api.app
+
+web-install:
+	cd web && $(NPM) install
+
+web-dev:
+	cd web && $(NPM) run dev
 
 pipeline:
 	$(PY) -m incident_intelligence.cli.pipeline $(PIPELINE_ARGS)

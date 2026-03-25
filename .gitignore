@@ -215,8 +215,11 @@ __pycache__/
 *.pyo
 *.pyd
 *.egg-info/
+.DS_Store
 models/
 artifacts/*
 data/*
 notebooks/explainability_outputs/
 */*/*/generate_data_backup.py
+web/node_modules/
+web/dist/

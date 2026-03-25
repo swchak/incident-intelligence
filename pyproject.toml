@@ -7,9 +7,11 @@ name = "incident-intelligence"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
+  "fastapi",
   "numpy",
   "pandas",
   "scipy",
+  "uvicorn",
 ]
 
 [tool.setuptools.packages.find]
@@ -24,6 +26,7 @@ incident-evaluate = "incident_intelligence.cli.evaluate:main"
 incident-explain = "incident_intelligence.cli.explain:main"
 incident-explain-local = "incident_intelligence.cli.explain_local:main"
 incident-pipeline = "incident_intelligence.cli.pipeline:main"
+incident-api = "incident_intelligence.api.app:main"
 
 [tool.incident_intelligence.generator]
 n_samples = 10000
