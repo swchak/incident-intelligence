@@ -181,8 +181,6 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
-If you prefer `requirements.txt`, it remains available as a convenience file for local environments. The package metadata in [pyproject.toml](/Users/swethachakravarthy/Projects/incident-intelligence/pyproject.toml) is the source of truth for runtime dependencies.
-
 ### 2. Run the backend API
 
 ```bash
@@ -427,7 +425,6 @@ incident-intelligence/
 │   └── vite.config.js
 ├── Makefile
 ├── pyproject.toml
-├── requirements.txt
 └── README.md
 ```
 
