@@ -99,7 +99,7 @@ The dashboard is intended to demonstrate the ML pipeline end to end rather than 
 - browsing generated plots, reports, and explainability outputs
 - inspecting background job logs from the UI
 
-## CI/CD And Deployment
+## CI And Deployment
 
 The repository now includes:
 
@@ -108,6 +108,7 @@ The repository now includes:
 - API container image: [Dockerfile.api](/Users/swethachakravarthy/Projects/incident-intelligence/Dockerfile.api)
 - frontend container image: [Dockerfile.web](/Users/swethachakravarthy/Projects/incident-intelligence/Dockerfile.web)
 - local/full-stack deployment config: [docker-compose.yml](/Users/swethachakravarthy/Projects/incident-intelligence/docker-compose.yml)
+- hosted deployment guide: [docs/deployment.md](/Users/swethachakravarthy/Projects/incident-intelligence/docs/deployment.md)
 
 ### CI
 
@@ -118,12 +119,14 @@ The CI workflow runs on pull requests and pushes to `main` and does the followin
 - builds the frontend bundle
 - builds both Docker images to catch deployment regressions early
 
-### CD
+### Release Automation
 
 The publish workflow runs on pushes to `main` and on manual dispatch. It builds and pushes two container images to GitHub Container Registry:
 
 - `ghcr.io/<owner>/<repo>/api`
 - `ghcr.io/<owner>/<repo>/web`
+
+The repo now also documents a concrete hosted deployment target and release flow in [docs/deployment.md](/Users/swethachakravarthy/Projects/incident-intelligence/docs/deployment.md). The current automation publishes release artifacts; the hosted demo deployment is documented for Render rather than fully automated inside GitHub Actions.
 
 ### Local Deployment
 
