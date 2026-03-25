@@ -4,11 +4,12 @@
 	evaluate evaluate-temporal \
 	explain explain-temporal \
 	explain-local explain-local-temporal \
+	test test-backend test-frontend \
 	api web-install web-dev \
 	pipeline pipeline-temporal pipeline-temporal-fast \
 	clean
 
-PY ?= python
+PY ?= ./venv/bin/python
 NPM ?= npm
 TRAIN_ARGS ?=
 EVAL_ARGS ?=
@@ -30,6 +31,9 @@ help:
 	@echo "  explain-temporal        - generate temporal global explainability artifacts"
 	@echo "  explain-local           - generate snapshot local explainability artifacts"
 	@echo "  explain-local-temporal  - generate temporal local explainability artifacts"
+	@echo "  test-backend            - run backend API tests"
+	@echo "  test-frontend           - run frontend dashboard tests"
+	@echo "  test                    - run backend and frontend tests"
 	@echo "  api                     - run the FastAPI dashboard backend"
 	@echo "  web-install             - install frontend dependencies"
 	@echo "  web-dev                 - run the Vite dashboard frontend"
@@ -80,6 +84,14 @@ explain-local:
 
 explain-local-temporal:
 	$(PY) -m incident_intelligence.cli.explain_local --dataset-kind temporal $(EXPLAIN_LOCAL_ARGS)
+
+test-backend:
+	PYTHONPATH=src MPLBACKEND=Agg MPLCONFIGDIR=/tmp $(PY) -m unittest discover -s tests
+
+test-frontend:
+	cd web && $(NPM) test
+
+test: test-backend test-frontend
 
 api:
 	PYTHONPATH=src MPLBACKEND=Agg MPLCONFIGDIR=/tmp $(PY) -m incident_intelligence.api.app
