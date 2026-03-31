@@ -77,7 +77,11 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Incident root-cause modeling with explainable results.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        /Incident root cause modeling - from synthetic telemetry and temporal features to explainable root-cause results\./i
+      )
+    ).toBeInTheDocument();
     expect(await screen.findAllByText("0.8500")).toHaveLength(2);
     expect(screen.getAllByText("artifacts/plots/confusion_matrix.png").length).toBeGreaterThan(0);
 
