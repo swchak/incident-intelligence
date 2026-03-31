@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
 import uuid
-from dataclasses import asdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +31,7 @@ DatasetKind = Literal["snapshot", "temporal"]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 API_RUNS_DIR = PROJECT_ROOT / "artifacts" / "api_runs"
 JOBS_STATE_PATH = API_RUNS_DIR / "jobs.json"
+JOBS_DB_PATH = API_RUNS_DIR / "jobs.sqlite3"
 
 
 def _cors_origins() -> list[str]:
@@ -75,20 +76,104 @@ class PipelineJob:
     return_code: int | None = None
 
 
+def _db_connect() -> sqlite3.Connection:
+    API_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(JOBS_DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _init_job_db() -> None:
+    with _db_connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pipeline_jobs (
+                job_id TEXT PRIMARY KEY,
+                dataset_kind TEXT NOT NULL,
+                command_json TEXT NOT NULL,
+                log_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                return_code INTEGER
+            )
+            """
+        )
+
+
+def _row_to_job(row: sqlite3.Row) -> PipelineJob:
+    return PipelineJob(
+        job_id=row["job_id"],
+        dataset_kind=row["dataset_kind"],
+        command=json.loads(row["command_json"]),
+        log_path=row["log_path"],
+        status=row["status"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        return_code=row["return_code"],
+    )
+
+
 def _load_jobs() -> dict[str, PipelineJob]:
+    _init_job_db()
+    with _db_connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM pipeline_jobs ORDER BY created_at DESC"
+        ).fetchall()
+    if rows:
+        return {row["job_id"]: _row_to_job(row) for row in rows}
+
     if not JOBS_STATE_PATH.exists():
         return {}
+
     raw_jobs = json.loads(JOBS_STATE_PATH.read_text(encoding="utf-8"))
-    return {
-        item["job_id"]: PipelineJob(**item)
-        for item in raw_jobs
-    }
+    jobs = {item["job_id"]: PipelineJob(**item) for item in raw_jobs}
+    if jobs:
+        _persist_jobs(jobs.values())
+    return jobs
+
+
+def _persist_jobs(jobs: list[PipelineJob] | tuple[PipelineJob, ...] | dict.values) -> None:
+    _init_job_db()
+    with _db_connect() as connection:
+        connection.execute("DELETE FROM pipeline_jobs")
+        connection.executemany(
+            """
+            INSERT INTO pipeline_jobs (
+                job_id,
+                dataset_kind,
+                command_json,
+                log_path,
+                status,
+                created_at,
+                started_at,
+                finished_at,
+                return_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    job.job_id,
+                    job.dataset_kind,
+                    json.dumps(job.command),
+                    job.log_path,
+                    job.status,
+                    job.created_at,
+                    job.started_at,
+                    job.finished_at,
+                    job.return_code,
+                )
+                for job in jobs
+            ],
+        )
 
 
 def _save_jobs() -> None:
-    API_RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    payload = [asdict(job) for job in sorted(_JOBS.values(), key=lambda item: item.created_at, reverse=True)]
-    JOBS_STATE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _persist_jobs(
+        sorted(_JOBS.values(), key=lambda item: item.created_at, reverse=True)
+    )
 
 
 _JOBS: dict[str, PipelineJob] = _load_jobs()
@@ -197,7 +282,9 @@ def _build_pipeline_command(request: PipelineRunRequest) -> list[str]:
 
 def _run_pipeline_job(job_id: str) -> None:
     with _JOBS_LOCK:
-        job = _JOBS[job_id]
+        job = _JOBS.get(job_id)
+        if job is None:
+            return
         job.status = "running"
         job.started_at = datetime.now(timezone.utc).isoformat()
         command = list(job.command)
@@ -222,7 +309,9 @@ def _run_pipeline_job(job_id: str) -> None:
         )
 
     with _JOBS_LOCK:
-        job = _JOBS[job_id]
+        job = _JOBS.get(job_id)
+        if job is None:
+            return
         job.return_code = process.returncode
         job.finished_at = datetime.now(timezone.utc).isoformat()
         job.status = "completed" if process.returncode == 0 else "failed"
@@ -241,6 +330,25 @@ def _job_response(job: PipelineJob) -> PipelineJobResponse:
         return_code=job.return_code,
         log_path=job.log_path,
     )
+
+
+def _delete_job(job_id: str) -> PipelineJob:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job_id '{job_id}'")
+        if job.status in {"queued", "running"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete job '{job_id}' while it is {job.status}",
+            )
+        _JOBS.pop(job_id, None)
+        _save_jobs()
+
+    log_path = Path(job.log_path)
+    if log_path.exists():
+        log_path.unlink()
+    return job
 
 
 app = FastAPI(
@@ -361,6 +469,11 @@ def get_pipeline_job_log(job_id: str) -> dict[str, str]:
     if not log_path.exists():
         return {"job_id": job_id, "log": ""}
     return {"job_id": job_id, "log": log_path.read_text(encoding="utf-8")}
+
+
+@app.delete("/api/pipeline/jobs/{job_id}", response_model=PipelineJobResponse)
+def delete_pipeline_job(job_id: str) -> PipelineJobResponse:
+    return _job_response(_delete_job(job_id))
 
 
 def main() -> None:

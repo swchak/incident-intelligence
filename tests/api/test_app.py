@@ -8,9 +8,13 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from incident_intelligence.api.app import (
+    PipelineJob,
     PipelineRunRequest,
+    _load_jobs,
+    _save_jobs,
     artifacts,
     dashboard_summary,
+    delete_pipeline_job,
     get_pipeline_job_log,
     health,
     get_project_file,
@@ -135,6 +139,52 @@ class DashboardApiTests(unittest.TestCase):
                 response = get_pipeline_job_log("job-123")
 
         self.assertEqual(response["log"], "pipeline finished")
+
+    def test_delete_pipeline_job_removes_job_and_log(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "job.log"
+            log_path.write_text("pipeline finished", encoding="utf-8")
+            jobs = {
+                "job-123": PipelineJob(
+                    job_id="job-123",
+                    dataset_kind="snapshot",
+                    command=["python", "-m", "incident_intelligence.cli.pipeline"],
+                    log_path=str(log_path),
+                    status="completed",
+                )
+            }
+
+            with patch("incident_intelligence.api.app._JOBS", jobs), patch(
+                "incident_intelligence.api.app._save_jobs"
+            ) as save_jobs_mock:
+                response = delete_pipeline_job("job-123")
+
+        self.assertEqual(response.job_id, "job-123")
+        self.assertFalse(log_path.exists())
+        self.assertEqual(jobs, {})
+        save_jobs_mock.assert_called_once()
+
+    def test_jobs_are_persisted_to_sqlite(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "jobs.sqlite3"
+            jobs = {
+                "job-123": PipelineJob(
+                    job_id="job-123",
+                    dataset_kind="snapshot",
+                    command=["python", "-m", "incident_intelligence.cli.pipeline"],
+                    log_path=str(Path(temp_dir) / "job-123.log"),
+                    status="completed",
+                )
+            }
+
+            with patch("incident_intelligence.api.app.JOBS_DB_PATH", db_path), patch(
+                "incident_intelligence.api.app.API_RUNS_DIR", Path(temp_dir)
+            ), patch("incident_intelligence.api.app._JOBS", jobs):
+                _save_jobs()
+                loaded_jobs = _load_jobs()
+                self.assertTrue(db_path.exists())
+                self.assertIn("job-123", loaded_jobs)
+                self.assertEqual(loaded_jobs["job-123"].status, "completed")
 
 
 if __name__ == "__main__":

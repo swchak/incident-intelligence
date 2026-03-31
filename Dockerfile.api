@@ -9,6 +9,7 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 COPY src ./src
+COPY generator_spec ./generator_spec
 COPY README.md ./
 RUN pip install --no-cache-dir -e .
 

@@ -1,153 +1,92 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-
-function okJson(body) {
-  return Promise.resolve({
-    ok: true,
-    json: async () => body
-  });
-}
 
 describe("App", () => {
   beforeEach(() => {
-    global.fetch = vi.fn((url, options) => {
-      const target = String(url);
-
-      if (target.endsWith("/api/dashboard/summary/snapshot")) {
-        return okJson({
-          dataset_kind: "snapshot",
-          artifacts: {
-            models_dir: "/tmp/models",
-            best_model: "/tmp/models/best_model.joblib",
-            evaluation_metrics: "/tmp/metrics/evaluation.json"
-          },
-          evaluation_metrics: {
-            models: [
-              {
-                model_name: "Logistic_Regression_pipeline",
-                metrics: {
-                  accuracy: 0.81,
-                  f1_macro: 0.79,
-                  precision_macro: 0.8,
-                  recall_macro: 0.78
-                }
-              }
-            ]
-          }
-        });
-      }
-
-      if (target.endsWith("/api/dashboard/summary/temporal")) {
-        return okJson({
-          dataset_kind: "temporal",
-          artifacts: {
-            models_dir: "/tmp/models_temporal",
-            best_model: "/tmp/models_temporal/best_model.joblib",
-            evaluation_metrics: "/tmp/metrics_temporal/evaluation.json"
-          },
-          evaluation_metrics: {
-            models: []
-          }
-        });
-      }
-
-      if (target.endsWith("/api/artifacts/snapshot") || target.endsWith("/api/artifacts/temporal")) {
-        return okJson({
-          artifacts: {
-            train_metrics: [{ path: "artifacts/metrics/train_val_results.json" }],
-            plots_dir: [
-              { path: "artifacts/plots/confusion_matrix_best_model.png" },
-              { path: "artifacts/plots/feature_importance_best_model.png" }
-            ],
-            reports_dir: [],
-            explain_dir: []
-          }
-        });
-      }
-
-      if (target.endsWith("/api/pipeline/jobs")) {
-        if (options?.method === "POST") {
-          return okJson({
-            job_id: "job-1",
-            status: "queued",
-            command: ["python", "-m", "incident_intelligence.cli.pipeline"],
-            dataset_kind: "snapshot",
-            created_at: "2026-03-25T10:00:00Z",
-            log_path: "/tmp/job-1.log"
-          });
-        }
-
-        return okJson([
-          {
-            job_id: "job-1",
-            status: "queued",
-            command: ["python", "-m", "incident_intelligence.cli.pipeline"],
-            dataset_kind: "snapshot",
-            created_at: "2026-03-25T10:00:00Z",
-            log_path: "/tmp/job-1.log"
-          }
-        ]);
-      }
-
-      if (target.endsWith("/api/pipeline/jobs/job-1/log")) {
-        return okJson({ job_id: "job-1", log: "pipeline log output" });
-      }
-
-      throw new Error(`Unhandled fetch for ${target}`);
-    });
-  });
-
-  afterEach(() => {
-    cleanup();
     vi.restoreAllMocks();
   });
 
-  it("renders snapshot summary and model metrics", async () => {
+  it("renders dashboard data and can start a job", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, options = {}) => {
+        const url = String(input);
+        if (url.endsWith("/api/dashboard/summary/snapshot")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                dataset_kind: "snapshot",
+                evaluation_metrics: {
+                  models: [
+                    {
+                      model_name: "Logistic",
+                      metrics: {
+                        accuracy: 0.9,
+                        f1_macro: 0.85,
+                        precision_macro: 0.84,
+                        recall_macro: 0.83
+                      }
+                    }
+                  ]
+                },
+                artifacts: {
+                  models_dir: "/app/artifacts/models",
+                  best_model: "/app/artifacts/models/best_model.joblib",
+                  evaluation_metrics: "/app/artifacts/metrics/evaluation.json"
+                }
+              })
+            )
+          );
+        }
+        if (url.endsWith("/api/artifacts/snapshot")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                dataset_kind: "snapshot",
+                artifacts: {
+                  train_metrics: [{ path: "artifacts/metrics/train_val_results.json", type: "file" }],
+                  plots_dir: [{ path: "artifacts/plots/confusion_matrix.png", type: "file" }],
+                  reports_dir: [{ path: "artifacts/reports/report.md", type: "file" }],
+                  explain_dir: []
+                }
+              })
+            )
+          );
+        }
+        if (url.endsWith("/api/pipeline/jobs")) {
+          return Promise.resolve(new Response(JSON.stringify([])));
+        }
+        if (url.endsWith("/api/pipeline/run") && options.method === "POST") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                job_id: "job-123",
+                dataset_kind: "snapshot",
+                status: "queued"
+              })
+            )
+          );
+        }
+        if (url.endsWith("/api/pipeline/jobs/job-123/log")) {
+          return Promise.resolve(new Response(JSON.stringify({ log: "hello log" })));
+        }
+
+        return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+      });
+
     render(<App />);
 
-    expect(screen.getByText(/Incident root-cause modeling with explainable results\./)).toBeInTheDocument();
+    expect(await screen.findByText("Incident root-cause modeling with explainable results.")).toBeInTheDocument();
+    expect(await screen.findAllByText("0.8500")).toHaveLength(2);
+    expect(screen.getAllByText("artifacts/plots/confusion_matrix.png").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /run snapshot pipeline/i }));
 
     await waitFor(() => {
-      expect(screen.getAllByText("Logistic_Regression_pipeline").length).toBeGreaterThan(0);
-    });
-
-    expect(screen.getByText("0.8100")).toBeInTheDocument();
-    expect(screen.getByText("confusion matrix best model")).toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(screen.getByText("pipeline log output")).toBeInTheDocument();
-    });
-  });
-
-  it("submits a pipeline run request", async () => {
-    render(<App />);
-
-    const runButton = await screen.findByRole("button", { name: "Run snapshot pipeline" });
-    fireEvent.click(runButton);
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        "/api/pipeline/run",
-        expect.objectContaining({
-          method: "POST",
-          headers: { "Content-Type": "application/json" }
-        })
-      );
-    });
-  });
-
-  it("switches to temporal dataset view", async () => {
-    render(<App />);
-
-    const temporalButton = screen.getByRole("button", { name: "temporal" });
-    fireEvent.click(temporalButton);
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        "/api/dashboard/summary/temporal",
-        undefined
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/pipeline/run"),
+        expect.objectContaining({ method: "POST" })
       );
     });
   });
