@@ -11,9 +11,11 @@ from incident_intelligence.api.app import (
     PipelineRun,
     PipelineRunRequest,
     PipelineStage,
+    _build_stages,
     _load_jobs,
     _save_jobs,
     artifacts,
+    cancel_pipeline_job,
     dashboard_summary,
     delete_pipeline_job,
     get_pipeline_job_log,
@@ -197,6 +199,10 @@ class DashboardApiTests(unittest.TestCase):
             log_dir.mkdir()
             log_path = log_dir / "01_train_snapshot.log"
             log_path.write_text("pipeline finished", encoding="utf-8")
+            data_root = Path(temp_dir) / "data" / "runs" / "job-123" / "processed"
+            data_root.mkdir(parents=True)
+            train_csv = data_root / "incident_snapshot_train.csv"
+            train_csv.write_text("label\nnormal\n", encoding="utf-8")
             jobs = {
                 "job-123": PipelineRun(
                     job_id="job-123",
@@ -221,12 +227,125 @@ class DashboardApiTests(unittest.TestCase):
                 "incident_intelligence.api.app._save_jobs"
             ) as save_jobs_mock, patch(
                 "incident_intelligence.api.app.API_RUNS_DIR", Path(temp_dir)
+            ), patch(
+                "incident_intelligence.api.app.PROJECT_ROOT", Path(temp_dir)
             ):
                 response = delete_pipeline_job("job-123")
 
         self.assertEqual(response.job_id, "job-123")
         self.assertFalse(log_dir.exists())
+        self.assertFalse(train_csv.exists())
         self.assertEqual(jobs, {})
+        save_jobs_mock.assert_called_once()
+
+    def test_build_stages_uses_run_scoped_dataset_paths(self) -> None:
+        request = PipelineRunRequest(
+            dataset_kind="snapshot",
+            mode="full",
+            models=["logistic", "rf"],
+        )
+
+        stages = _build_stages("job-123", request)
+        generate_command = stages[0].command
+        train_command = stages[1].command
+        evaluate_command = stages[2].command
+        explain_command = stages[3].command
+
+        self.assertIn("--raw-out", generate_command)
+        self.assertTrue(
+            any("data/runs/job-123/raw/incidents_raw.csv" in arg for arg in generate_command)
+        )
+        self.assertIn("--processed-dir", generate_command)
+        self.assertTrue(any("data/runs/job-123/processed" in arg for arg in generate_command))
+
+        self.assertIn("--train", train_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_train.csv" in arg for arg in train_command)
+        )
+        self.assertIn("--val", train_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_val.csv" in arg for arg in train_command)
+        )
+
+        self.assertIn("--data", evaluate_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_eval.csv" in arg for arg in evaluate_command)
+        )
+        self.assertIn("--data", explain_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_eval.csv" in arg for arg in explain_command)
+        )
+
+    def test_cancel_pipeline_job_marks_queued_run_cancelled(self) -> None:
+        jobs = {
+            "job-123": PipelineRun(
+                job_id="job-123",
+                dataset_kind="snapshot",
+                mode="full",
+                requested_stages=["generate_snapshot", "train_snapshot"],
+                stages=[
+                    PipelineStage(
+                        stage_id="job-123:generate_snapshot",
+                        stage_name="generate_snapshot",
+                        stage_order=0,
+                        command=["python", "-m", "incident_intelligence.cli.generator"],
+                        log_path="/tmp/01_generate_snapshot.log",
+                        status="queued",
+                    ),
+                    PipelineStage(
+                        stage_id="job-123:train_snapshot",
+                        stage_name="train_snapshot",
+                        stage_order=1,
+                        command=["python", "-m", "incident_intelligence.cli.train"],
+                        log_path="/tmp/02_train_snapshot.log",
+                        status="queued",
+                    ),
+                ],
+                status="queued",
+            )
+        }
+
+        with patch("incident_intelligence.api.app._JOBS", jobs), patch(
+            "incident_intelligence.api.app._save_jobs"
+        ) as save_jobs_mock:
+            response = cancel_pipeline_job("job-123")
+
+        self.assertEqual(response.status, "cancelled")
+        self.assertTrue(all(stage.status == "skipped" for stage in jobs["job-123"].stages))
+        save_jobs_mock.assert_called_once()
+
+    def test_cancel_pipeline_job_marks_running_run_cancelling(self) -> None:
+        jobs = {
+            "job-123": PipelineRun(
+                job_id="job-123",
+                dataset_kind="snapshot",
+                mode="full",
+                requested_stages=["train_snapshot"],
+                stages=[
+                    PipelineStage(
+                        stage_id="job-123:train_snapshot",
+                        stage_name="train_snapshot",
+                        stage_order=0,
+                        command=["python", "-m", "incident_intelligence.cli.train"],
+                        log_path="/tmp/01_train_snapshot.log",
+                        status="running",
+                    )
+                ],
+                status="running",
+                current_stage_name="train_snapshot",
+            )
+        }
+        process_mock = unittest.mock.Mock()
+
+        with patch("incident_intelligence.api.app._JOBS", jobs), patch(
+            "incident_intelligence.api.app._save_jobs"
+        ) as save_jobs_mock, patch(
+            "incident_intelligence.api.app._RUN_PROCESSES", {"job-123": process_mock}
+        ):
+            response = cancel_pipeline_job("job-123")
+
+        self.assertEqual(response.status, "cancelling")
+        process_mock.terminate.assert_called_once()
         save_jobs_mock.assert_called_once()
 
     def test_runs_are_persisted_to_sqlite(self) -> None:

@@ -30,7 +30,7 @@ from incident_intelligence.modeling.train import with_dataset_suffix, with_paren
 
 DatasetKind = Literal["snapshot", "temporal"]
 RunMode = Literal["full", "custom"]
-RunStatus = Literal["queued", "running", "completed", "failed"]
+RunStatus = Literal["queued", "running", "cancelling", "completed", "failed", "cancelled"]
 StageStatus = Literal["queued", "running", "completed", "failed", "skipped"]
 StageName = Literal[
     "generate_snapshot",
@@ -80,6 +80,7 @@ class PipelineRunRequest(BaseModel):
     dataset_kind: DatasetKind = "snapshot"
     mode: RunMode = "full"
     stages: list[str] | None = None
+    source_job_id: str | None = None
     fast_mode: bool = False
     models: list[str] | None = None
     cv: int | None = Field(default=None, ge=2)
@@ -111,6 +112,7 @@ class PipelineJobResponse(BaseModel):
     dataset_kind: DatasetKind
     mode: RunMode
     requested_stages: list[str]
+    artifacts_root: str
     status: str
     current_stage_name: str | None = None
     created_at: str
@@ -162,6 +164,10 @@ class PipelineRun:
     @property
     def log_path(self) -> str:
         return str(API_RUNS_DIR / self.job_id)
+
+    @property
+    def artifacts_root(self) -> str:
+        return str(PROJECT_ROOT / "artifacts" / "runs" / self.job_id)
 
 
 class Base(DeclarativeBase):
@@ -438,6 +444,43 @@ def _dataset_paths(dataset_kind: DatasetKind) -> dict[str, str]:
     }
 
 
+def _run_data_paths(dataset_kind: DatasetKind, job_id: str) -> dict[str, str]:
+    root = PROJECT_ROOT / "data" / "runs" / job_id
+    if dataset_kind == "snapshot":
+        return {
+            "root": str(root),
+            "raw": str(root / "raw" / "incidents_raw.csv"),
+            "processed_dir": str(root / "processed"),
+            "train": str(root / "processed" / "incident_snapshot_train.csv"),
+            "val": str(root / "processed" / "incident_snapshot_val.csv"),
+            "eval": str(root / "processed" / "incident_snapshot_eval.csv"),
+        }
+    return {
+        "root": str(root),
+        "sequence": str(root / "raw" / "incidents_sequence_raw.csv"),
+        "output_dir": str(root / "processed"),
+        "all": str(root / "processed" / "incident_temporal_all.csv"),
+        "train": str(root / "processed" / "incident_temporal_train.csv"),
+        "val": str(root / "processed" / "incident_temporal_val.csv"),
+        "eval": str(root / "processed" / "incident_temporal_eval.csv"),
+    }
+
+
+def _dataset_paths_for_job(dataset_kind: DatasetKind, job_id: str | None = None) -> dict[str, str]:
+    if not job_id:
+        return _dataset_paths(dataset_kind)
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job_id '{job_id}'")
+    if job.dataset_kind != dataset_kind:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job '{job_id}' does not belong to dataset_kind '{dataset_kind}'",
+        )
+    return _run_data_paths(dataset_kind, job_id)
+
+
 def _dashboard_paths(dataset_kind: DatasetKind) -> dict[str, str]:
     train_settings = load_config(TrainCLIConfig, "train")
     eval_settings = load_config(EvaluateCLIConfig, "evaluate")
@@ -454,6 +497,56 @@ def _dashboard_paths(dataset_kind: DatasetKind) -> dict[str, str]:
         "reports_dir": str(PROJECT_ROOT / _artifact_dir("artifacts/reports", dataset_kind)),
         "explain_dir": str(PROJECT_ROOT / _artifact_dir(explain_settings.out_dir, dataset_kind)),
     }
+
+
+def _run_artifact_paths(job_id: str) -> dict[str, str]:
+    root = PROJECT_ROOT / "artifacts" / "runs" / job_id
+    return {
+        "root": str(root),
+        "models_dir": str(root / "models"),
+        "best_model": str(root / "models" / "best_model.joblib"),
+        "train_metrics": str(root / "metrics" / "train_val_results.json"),
+        "leaderboard": str(root / "metrics" / "leaderboard_val.csv"),
+        "evaluation_metrics": str(root / "metrics" / "evaluation.json"),
+        "evaluation_summary": str(root / "metrics" / "evaluation_summary.csv"),
+        "plots_dir": str(root / "plots"),
+        "reports_dir": str(root / "reports"),
+        "explain_dir": str(root / "explain"),
+    }
+
+
+def _dashboard_paths_for_job(dataset_kind: DatasetKind, job_id: str | None = None) -> dict[str, str]:
+    if not job_id:
+        return _dashboard_paths(dataset_kind)
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job_id '{job_id}'")
+    if job.dataset_kind != dataset_kind:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job '{job_id}' does not belong to dataset_kind '{dataset_kind}'",
+        )
+    return _run_artifact_paths(job_id)
+
+
+def _data_source_job_id(
+    *,
+    stage_name: StageName,
+    prior_stages: list[StageName],
+    request: PipelineRunRequest,
+    job_id: str,
+) -> str:
+    data_producing_stages = {
+        "generate_snapshot",
+        "generate_sequence",
+        "build_temporal_features",
+    }
+    if any(stage in data_producing_stages for stage in prior_stages):
+        return job_id
+    if request.source_job_id:
+        return request.source_job_id
+    return job_id
 
 
 def _safe_load_json(path_str: str) -> dict | list | None:
@@ -489,15 +582,65 @@ def _list_artifacts(path_str: str) -> list[dict[str, str | int]]:
     return items
 
 
-def _stage_command(stage_name: StageName, request: PipelineRunRequest) -> list[str]:
+def _models_source_dir_for_stage(
+    *,
+    stage_name: StageName,
+    prior_stages: list[StageName],
+    request: PipelineRunRequest,
+    job_id: str,
+) -> str:
+    current_paths = _run_artifact_paths(job_id)
+    if any(stage in {"train_snapshot", "train_temporal"} for stage in prior_stages):
+        return current_paths["models_dir"]
+    if request.source_job_id:
+        return _run_artifact_paths(request.source_job_id)["models_dir"]
+    return current_paths["models_dir"]
+
+
+def _stage_command(
+    stage_name: StageName,
+    request: PipelineRunRequest,
+    *,
+    job_id: str,
+    prior_stages: list[StageName],
+) -> list[str]:
     command = [sys.executable, "-m"]
+    artifact_paths = _run_artifact_paths(job_id)
+    source_job_id = _data_source_job_id(
+        stage_name=stage_name,
+        prior_stages=prior_stages,
+        request=request,
+        job_id=job_id,
+    )
+    run_data_paths = _run_data_paths(request.dataset_kind, job_id)
+    data_paths = (
+        run_data_paths
+        if source_job_id == job_id
+        else _dataset_paths_for_job(request.dataset_kind, source_job_id)
+    )
 
     if stage_name == "generate_snapshot":
-        return command + ["incident_intelligence.cli.generator"]
+        return command + [
+            "incident_intelligence.cli.generator",
+            "--raw-out",
+            run_data_paths["raw"],
+            "--processed-dir",
+            run_data_paths["processed_dir"],
+        ]
     if stage_name == "generate_sequence":
-        return command + ["incident_intelligence.cli.generate_sequence"]
+        return command + [
+            "incident_intelligence.cli.generate_sequence",
+            "--output",
+            run_data_paths["sequence"],
+        ]
     if stage_name == "build_temporal_features":
-        return command + ["incident_intelligence.cli.build_temporal_features"]
+        return command + [
+            "incident_intelligence.cli.build_temporal_features",
+            "--input",
+            data_paths["sequence"],
+            "--output-dir",
+            run_data_paths["output_dir"],
+        ]
 
     if stage_name in {"train_snapshot", "train_temporal"}:
         command.extend(
@@ -505,6 +648,18 @@ def _stage_command(stage_name: StageName, request: PipelineRunRequest) -> list[s
                 "incident_intelligence.cli.train",
                 "--dataset-kind",
                 request.dataset_kind,
+                "--train",
+                data_paths["train"],
+                "--val",
+                data_paths["val"],
+                "--models-out-dir",
+                artifact_paths["models_dir"],
+                "--metrics-out-json",
+                artifact_paths["train_metrics"],
+                "--leaderboard-out-csv",
+                artifact_paths["leaderboard"],
+                "--best-model-out",
+                artifact_paths["best_model"],
             ]
         )
         if request.fast_mode:
@@ -526,6 +681,23 @@ def _stage_command(stage_name: StageName, request: PipelineRunRequest) -> list[s
             "incident_intelligence.cli.evaluate",
             "--dataset-kind",
             request.dataset_kind,
+            "--data",
+            data_paths["eval"],
+            "--models-dir",
+            _models_source_dir_for_stage(
+                stage_name=stage_name,
+                prior_stages=prior_stages,
+                request=request,
+                job_id=job_id,
+            ),
+            "--metrics-out",
+            artifact_paths["evaluation_metrics"],
+            "--summary-csv-out",
+            artifact_paths["evaluation_summary"],
+            "--plots-dir",
+            artifact_paths["plots_dir"],
+            "--reports-dir",
+            artifact_paths["reports_dir"],
         ]
 
     if stage_name in {"explain_snapshot", "explain_temporal"}:
@@ -533,6 +705,17 @@ def _stage_command(stage_name: StageName, request: PipelineRunRequest) -> list[s
             "incident_intelligence.cli.explain",
             "--dataset-kind",
             request.dataset_kind,
+            "--data",
+            data_paths["eval"],
+            "--models-dir",
+            _models_source_dir_for_stage(
+                stage_name=stage_name,
+                prior_stages=prior_stages,
+                request=request,
+                job_id=job_id,
+            ),
+            "--out-dir",
+            artifact_paths["explain_dir"],
         ]
 
     raise HTTPException(status_code=500, detail=f"Unhandled stage '{stage_name}'")
@@ -540,7 +723,8 @@ def _stage_command(stage_name: StageName, request: PipelineRunRequest) -> list[s
 
 def _build_stages(job_id: str, request: PipelineRunRequest) -> list[PipelineStage]:
     stages: list[PipelineStage] = []
-    for order, stage_name in enumerate(_resolve_requested_stages(request)):
+    requested_stages = _resolve_requested_stages(request)
+    for order, stage_name in enumerate(requested_stages):
         log_dir = API_RUNS_DIR / job_id
         log_path = log_dir / f"{order + 1:02d}_{stage_name}.log"
         stages.append(
@@ -548,7 +732,12 @@ def _build_stages(job_id: str, request: PipelineRunRequest) -> list[PipelineStag
                 stage_id=f"{job_id}:{stage_name}",
                 stage_name=stage_name,
                 stage_order=order,
-                command=_stage_command(stage_name, request),
+                command=_stage_command(
+                    stage_name,
+                    request,
+                    job_id=job_id,
+                    prior_stages=requested_stages[:order],
+                ),
                 log_path=str(log_path),
             )
         )
@@ -573,6 +762,9 @@ def _run_pipeline_job(job_id: str) -> None:
         run = _JOBS.get(job_id)
         if run is None:
             return
+        if run.status == "cancelled":
+            _save_jobs()
+            return
         run.status = "running"
         run.started_at = _utc_now()
         _save_jobs()
@@ -587,6 +779,15 @@ def _run_pipeline_job(job_id: str) -> None:
             current = _JOBS.get(job_id)
             if current is None:
                 return
+            if current.status in {"cancelled", "cancelling"}:
+                current.status = "cancelled"
+                current.finished_at = current.finished_at or _utc_now()
+                current.current_stage_name = None
+                for pending in current.stages:
+                    if pending.status == "queued":
+                        pending.status = "skipped"
+                _save_jobs()
+                return
             current.current_stage_name = stage.stage_name
             active_stage = next(
                 item for item in current.stages if item.stage_id == stage.stage_id
@@ -598,15 +799,19 @@ def _run_pipeline_job(job_id: str) -> None:
         log_path = Path(stage.log_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as log_file:
-            process = subprocess.run(
+            process = subprocess.Popen(
                 stage.command,
                 cwd=PROJECT_ROOT,
                 env=env,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 text=True,
-                check=False,
             )
+            with _JOBS_LOCK:
+                _RUN_PROCESSES[job_id] = process
+            return_code = process.wait()
+            with _JOBS_LOCK:
+                _RUN_PROCESSES.pop(job_id, None)
 
         with _JOBS_LOCK:
             current = _JOBS.get(job_id)
@@ -615,10 +820,19 @@ def _run_pipeline_job(job_id: str) -> None:
             active_stage = next(
                 item for item in current.stages if item.stage_id == stage.stage_id
             )
-            active_stage.return_code = process.returncode
+            active_stage.return_code = return_code
             active_stage.finished_at = _utc_now()
-            active_stage.status = "completed" if process.returncode == 0 else "failed"
-            if process.returncode != 0:
+            active_stage.status = "completed" if return_code == 0 else "failed"
+            if current.status == "cancelling":
+                current.status = "cancelled"
+                current.finished_at = _utc_now()
+                current.current_stage_name = None
+                for pending in current.stages:
+                    if pending.stage_order > active_stage.stage_order and pending.status == "queued":
+                        pending.status = "skipped"
+                _save_jobs()
+                return
+            if return_code != 0:
                 current.status = "failed"
                 current.finished_at = _utc_now()
                 current.current_stage_name = active_stage.stage_name
@@ -659,6 +873,7 @@ def _job_response(run: PipelineRun) -> PipelineJobResponse:
         dataset_kind=run.dataset_kind,
         mode=run.mode,
         requested_stages=run.requested_stages,
+        artifacts_root=run.artifacts_root,
         status=run.status,
         current_stage_name=run.current_stage_name,
         created_at=run.created_at,
@@ -691,7 +906,64 @@ def _delete_job(job_id: str) -> PipelineRun:
             elif item.is_dir():
                 item.rmdir()
         log_dir.rmdir()
+    artifact_dir = Path(job.artifacts_root)
+    if artifact_dir.exists():
+        for item in sorted(artifact_dir.rglob("*"), reverse=True):
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                item.rmdir()
+        artifact_dir.rmdir()
+    data_dir = Path(_run_data_paths(job.dataset_kind, job.job_id)["root"])
+    if data_dir.exists():
+        for item in sorted(data_dir.rglob("*"), reverse=True):
+            if item.is_file():
+                item.unlink()
+            elif item.is_dir():
+                item.rmdir()
+        data_dir.rmdir()
     return job
+
+
+def _cancel_job(job_id: str) -> PipelineRun:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job_id '{job_id}'")
+        if job.status in {"completed", "failed", "cancelled"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job '{job_id}' is already {job.status} and cannot be cancelled",
+            )
+        if job.status == "queued":
+            job.status = "cancelled"
+            job.finished_at = _utc_now()
+            job.current_stage_name = None
+            for stage in job.stages:
+                if stage.status == "queued":
+                    stage.status = "skipped"
+            _save_jobs()
+            return job
+
+        job.status = "cancelling"
+        process = _RUN_PROCESSES.get(job_id)
+        _save_jobs()
+    if process is not None:
+        try:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        except ProcessLookupError:
+            pass
+
+    with _JOBS_LOCK:
+        refreshed = _JOBS.get(job_id)
+        if refreshed is None:
+            raise HTTPException(status_code=404, detail=f"Unknown job_id '{job_id}'")
+        return refreshed
 
 
 app = FastAPI(
@@ -711,6 +983,7 @@ app.add_middleware(
 
 _JOBS: dict[str, PipelineRun] = _load_jobs()
 _JOBS_LOCK = threading.Lock()
+_RUN_PROCESSES: dict[str, subprocess.Popen] = {}
 
 
 @app.get("/api/health")
@@ -735,11 +1008,12 @@ def config_summary() -> dict[str, object]:
 
 
 @app.get("/api/dashboard/summary/{dataset_kind}")
-def dashboard_summary(dataset_kind: DatasetKind) -> dict[str, object]:
-    paths = _dashboard_paths(dataset_kind)
+def dashboard_summary(dataset_kind: DatasetKind, job_id: str | None = None) -> dict[str, object]:
+    paths = _dashboard_paths_for_job(dataset_kind, job_id)
     return {
         "dataset_kind": dataset_kind,
-        "datasets": _dataset_paths(dataset_kind),
+        "job_id": job_id,
+        "datasets": _dataset_paths_for_job(dataset_kind, job_id),
         "artifacts": paths,
         "train_metrics": _safe_load_json(paths["train_metrics"]),
         "evaluation_metrics": _safe_load_json(paths["evaluation_metrics"]),
@@ -747,10 +1021,11 @@ def dashboard_summary(dataset_kind: DatasetKind) -> dict[str, object]:
 
 
 @app.get("/api/artifacts/{dataset_kind}")
-def artifacts(dataset_kind: DatasetKind) -> dict[str, object]:
-    paths = _dashboard_paths(dataset_kind)
+def artifacts(dataset_kind: DatasetKind, job_id: str | None = None) -> dict[str, object]:
+    paths = _dashboard_paths_for_job(dataset_kind, job_id)
     return {
         "dataset_kind": dataset_kind,
+        "job_id": job_id,
         "artifacts": {
             name: _list_artifacts(path_str)
             for name, path_str in paths.items()
@@ -841,6 +1116,11 @@ def get_pipeline_job_log(job_id: str) -> dict[str, object]:
 @app.delete("/api/pipeline/jobs/{job_id}", response_model=PipelineJobResponse)
 def delete_pipeline_job(job_id: str) -> PipelineJobResponse:
     return _job_response(_delete_job(job_id))
+
+
+@app.post("/api/pipeline/jobs/{job_id}/cancel", response_model=PipelineJobResponse)
+def cancel_pipeline_job(job_id: str) -> PipelineJobResponse:
+    return _job_response(_cancel_job(job_id))
 
 
 def main() -> None:
