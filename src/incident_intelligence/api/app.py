@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -16,6 +15,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import ForeignKey, Integer, String, Text, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 import uvicorn
 
 from incident_intelligence.config import (
@@ -163,111 +164,130 @@ class PipelineRun:
         return str(API_RUNS_DIR / self.job_id)
 
 
-def _db_connect() -> sqlite3.Connection:
-    API_RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(JOBS_DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
+class Base(DeclarativeBase):
+    pass
 
 
-def _init_job_db() -> None:
-    with _db_connect() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS pipeline_runs (
-                job_id TEXT PRIMARY KEY,
-                dataset_kind TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                requested_stages_json TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT,
-                current_stage_name TEXT,
-                error_message TEXT
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS pipeline_run_stages (
-                stage_id TEXT PRIMARY KEY,
-                job_id TEXT NOT NULL,
-                stage_name TEXT NOT NULL,
-                stage_order INTEGER NOT NULL,
-                command_json TEXT NOT NULL,
-                log_path TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT,
-                return_code INTEGER,
-                error_message TEXT,
-                FOREIGN KEY(job_id) REFERENCES pipeline_runs(job_id)
-            )
-            """
-        )
-        connection.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_pipeline_run_stages_job_id
-            ON pipeline_run_stages(job_id, stage_order)
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS pipeline_jobs (
-                job_id TEXT PRIMARY KEY,
-                dataset_kind TEXT NOT NULL,
-                command_json TEXT NOT NULL,
-                log_path TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT,
-                return_code INTEGER
-            )
-            """
-        )
+class PipelineRunRecord(Base):
+    __tablename__ = "pipeline_runs"
 
-
-def _row_to_stage(row: sqlite3.Row) -> PipelineStage:
-    return PipelineStage(
-        stage_id=row["stage_id"],
-        stage_name=row["stage_name"],
-        stage_order=row["stage_order"],
-        command=json.loads(row["command_json"]),
-        log_path=row["log_path"],
-        status=row["status"],
-        started_at=row["started_at"],
-        finished_at=row["finished_at"],
-        return_code=row["return_code"],
-        error_message=row["error_message"],
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    dataset_kind: Mapped[str] = mapped_column(String, nullable=False)
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    requested_stages_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    current_stage_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stages: Mapped[list["PipelineStageRecord"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="PipelineStageRecord.stage_order",
     )
 
 
-def _legacy_rows_to_runs(rows: list[sqlite3.Row]) -> dict[str, PipelineRun]:
+class PipelineStageRecord(Base):
+    __tablename__ = "pipeline_run_stages"
+
+    stage_id: Mapped[str] = mapped_column(String, primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("pipeline_runs.job_id"),
+        nullable=False,
+        index=True,
+    )
+    stage_name: Mapped[str] = mapped_column(String, nullable=False)
+    stage_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    command_json: Mapped[str] = mapped_column(Text, nullable=False)
+    log_path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    return_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run: Mapped[PipelineRunRecord] = relationship(back_populates="stages")
+
+
+class LegacyPipelineJobRecord(Base):
+    __tablename__ = "pipeline_jobs"
+
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    dataset_kind: Mapped[str] = mapped_column(String, nullable=False)
+    command_json: Mapped[str] = mapped_column(Text, nullable=False)
+    log_path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    return_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+def _db_engine():
+    API_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    return create_engine(f"sqlite:///{JOBS_DB_PATH}", future=True)
+
+
+def _init_job_db() -> None:
+    Base.metadata.create_all(_db_engine())
+
+
+def _record_to_stage(record: PipelineStageRecord) -> PipelineStage:
+    return PipelineStage(
+        stage_id=record.stage_id,
+        stage_name=record.stage_name,
+        stage_order=record.stage_order,
+        command=json.loads(record.command_json),
+        log_path=record.log_path,
+        status=record.status,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+        return_code=record.return_code,
+        error_message=record.error_message,
+    )
+
+
+def _record_to_run(record: PipelineRunRecord) -> PipelineRun:
+    return PipelineRun(
+        job_id=record.job_id,
+        dataset_kind=record.dataset_kind,
+        mode=record.mode,
+        requested_stages=json.loads(record.requested_stages_json),
+        stages=[_record_to_stage(stage) for stage in sorted(record.stages, key=lambda item: item.stage_order)],
+        status=record.status,
+        created_at=record.created_at,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+        current_stage_name=record.current_stage_name,
+        error_message=record.error_message,
+    )
+
+
+def _legacy_rows_to_runs(rows: list[LegacyPipelineJobRecord]) -> dict[str, PipelineRun]:
     runs: dict[str, PipelineRun] = {}
     for row in rows:
         stage = PipelineStage(
-            stage_id=f"{row['job_id']}:pipeline",
+            stage_id=f"{row.job_id}:pipeline",
             stage_name="pipeline",
             stage_order=0,
-            command=json.loads(row["command_json"]),
-            log_path=row["log_path"],
-            status=row["status"],
-            started_at=row["started_at"],
-            finished_at=row["finished_at"],
-            return_code=row["return_code"],
+            command=json.loads(row.command_json),
+            log_path=row.log_path,
+            status=row.status,
+            started_at=row.started_at,
+            finished_at=row.finished_at,
+            return_code=row.return_code,
         )
-        runs[row["job_id"]] = PipelineRun(
-            job_id=row["job_id"],
-            dataset_kind=row["dataset_kind"],
+        runs[row.job_id] = PipelineRun(
+            job_id=row.job_id,
+            dataset_kind=row.dataset_kind,
             mode="full",
             requested_stages=["pipeline"],
             stages=[stage],
-            status=row["status"],
-            created_at=row["created_at"],
-            started_at=row["started_at"],
-            finished_at=row["finished_at"],
+            status=row.status,
+            created_at=row.created_at,
+            started_at=row.started_at,
+            finished_at=row.finished_at,
             current_stage_name=None,
         )
     return runs
@@ -275,38 +295,16 @@ def _legacy_rows_to_runs(rows: list[sqlite3.Row]) -> dict[str, PipelineRun]:
 
 def _load_jobs() -> dict[str, PipelineRun]:
     _init_job_db()
-    with _db_connect() as connection:
-        run_rows = connection.execute(
-            "SELECT * FROM pipeline_runs ORDER BY created_at DESC"
-        ).fetchall()
+    with Session(_db_engine()) as session:
+        run_rows = session.scalars(
+            select(PipelineRunRecord).order_by(PipelineRunRecord.created_at.desc())
+        ).all()
         if run_rows:
-            stage_rows = connection.execute(
-                "SELECT * FROM pipeline_run_stages ORDER BY job_id, stage_order"
-            ).fetchall()
-            stages_by_run: dict[str, list[PipelineStage]] = {}
-            for row in stage_rows:
-                stages_by_run.setdefault(row["job_id"], []).append(_row_to_stage(row))
+            return {row.job_id: _record_to_run(row) for row in run_rows}
 
-            return {
-                row["job_id"]: PipelineRun(
-                    job_id=row["job_id"],
-                    dataset_kind=row["dataset_kind"],
-                    mode=row["mode"],
-                    requested_stages=json.loads(row["requested_stages_json"]),
-                    stages=stages_by_run.get(row["job_id"], []),
-                    status=row["status"],
-                    created_at=row["created_at"],
-                    started_at=row["started_at"],
-                    finished_at=row["finished_at"],
-                    current_stage_name=row["current_stage_name"],
-                    error_message=row["error_message"],
-                )
-                for row in run_rows
-            }
-
-        legacy_rows = connection.execute(
-            "SELECT * FROM pipeline_jobs ORDER BY created_at DESC"
-        ).fetchall()
+        legacy_rows = session.scalars(
+            select(LegacyPipelineJobRecord).order_by(LegacyPipelineJobRecord.created_at.desc())
+        ).all()
     if legacy_rows:
         runs = _legacy_rows_to_runs(legacy_rows)
         _persist_jobs(runs.values())
@@ -350,74 +348,41 @@ def _load_jobs() -> dict[str, PipelineRun]:
 def _persist_jobs(runs: list[PipelineRun] | tuple[PipelineRun, ...] | dict.values) -> None:
     _init_job_db()
     ordered_runs = list(runs)
-    with _db_connect() as connection:
-        connection.execute("DELETE FROM pipeline_run_stages")
-        connection.execute("DELETE FROM pipeline_runs")
-        connection.executemany(
-            """
-            INSERT INTO pipeline_runs (
-                job_id,
-                dataset_kind,
-                mode,
-                requested_stages_json,
-                status,
-                created_at,
-                started_at,
-                finished_at,
-                current_stage_name,
-                error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    run.job_id,
-                    run.dataset_kind,
-                    run.mode,
-                    json.dumps(run.requested_stages),
-                    run.status,
-                    run.created_at,
-                    run.started_at,
-                    run.finished_at,
-                    run.current_stage_name,
-                    run.error_message,
+    with Session(_db_engine()) as session:
+        session.query(PipelineStageRecord).delete()
+        session.query(PipelineRunRecord).delete()
+        for run in ordered_runs:
+            session.add(
+                PipelineRunRecord(
+                    job_id=run.job_id,
+                    dataset_kind=run.dataset_kind,
+                    mode=run.mode,
+                    requested_stages_json=json.dumps(run.requested_stages),
+                    status=run.status,
+                    created_at=run.created_at,
+                    started_at=run.started_at,
+                    finished_at=run.finished_at,
+                    current_stage_name=run.current_stage_name,
+                    error_message=run.error_message,
+                    stages=[
+                        PipelineStageRecord(
+                            stage_id=stage.stage_id,
+                            job_id=run.job_id,
+                            stage_name=stage.stage_name,
+                            stage_order=stage.stage_order,
+                            command_json=json.dumps(stage.command),
+                            log_path=stage.log_path,
+                            status=stage.status,
+                            started_at=stage.started_at,
+                            finished_at=stage.finished_at,
+                            return_code=stage.return_code,
+                            error_message=stage.error_message,
+                        )
+                        for stage in run.stages
+                    ],
                 )
-                for run in ordered_runs
-            ],
-        )
-        connection.executemany(
-            """
-            INSERT INTO pipeline_run_stages (
-                stage_id,
-                job_id,
-                stage_name,
-                stage_order,
-                command_json,
-                log_path,
-                status,
-                started_at,
-                finished_at,
-                return_code,
-                error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    stage.stage_id,
-                    run.job_id,
-                    stage.stage_name,
-                    stage.stage_order,
-                    json.dumps(stage.command),
-                    stage.log_path,
-                    stage.status,
-                    stage.started_at,
-                    stage.finished_at,
-                    stage.return_code,
-                    stage.error_message,
-                )
-                for run in ordered_runs
-                for stage in run.stages
-            ],
-        )
+            )
+        session.commit()
 
 
 def _save_jobs() -> None:
