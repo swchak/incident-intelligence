@@ -192,9 +192,10 @@ The repository now includes a lightweight full-stack demo app:
 The dashboard is intended to demonstrate the ML pipeline end to end rather than serve production traffic. It focuses on:
 
 - running snapshot and temporal pipeline jobs
+- running either the full workflow or selected stages only
 - viewing latest metrics and artifacts
 - browsing generated plots, reports, and explainability outputs
-- inspecting background job logs from the UI
+- inspecting per-stage progress and aggregated stage logs from the UI
 - persisting pipeline run history in SQLite across backend restarts
 - deleting completed and failed pipeline runs from the UI
 - surfacing evaluation and explainability visuals like confusion matrices, feature-importance charts, and SHAP outputs directly in the UI
@@ -275,7 +276,8 @@ After starting the stack, a quick local verification pass is:
 4. Switch between `snapshot` and `temporal` in the UI and verify both views load.
 5. Start a pipeline job from the dashboard and confirm:
    - a new job appears in the job list
-   - the selected job log begins updating
+   - the run shows ordered stages and stage status chips
+   - the selected job log begins updating with stage headers
 6. Stop the stack with `make docker-down`.
 
 ### Backend API Endpoints

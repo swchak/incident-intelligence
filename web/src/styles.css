@@ -274,6 +274,46 @@ input {
   align-content: start;
 }
 
+.stage-mode-row,
+.stage-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.stage-mode-toggle {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stage-mode-toggle button {
+  border: 1px solid rgba(20, 33, 61, 0.12);
+  background: rgba(20, 33, 61, 0.04);
+  color: #14213d;
+  border-radius: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.stage-mode-toggle button.active {
+  background: #14213d;
+  color: #f7f5ef;
+}
+
+.stage-options {
+  display: grid;
+  gap: 8px;
+}
+
+.stage-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #33415f;
+  font-size: 0.92rem;
+}
+
 .run-ppl-col,
 .card-band-top {
   display: block;
@@ -499,9 +539,28 @@ th {
 
 .job-select {
   display: grid;
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  justify-items: start;
+}
+
+.job-primary-row {
+  display: grid;
   grid-template-columns: auto 90px minmax(0, 1fr);
-  align-items: center;
   gap: 10px;
+  width: 100%;
+}
+
+.job-secondary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.job-select {
   border: none;
   background: transparent;
   padding: 0;
@@ -536,6 +595,52 @@ th {
 .job-delete:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.job-mode,
+.job-stage-summary {
+  color: #65718a;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.job-stage-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(20, 33, 61, 0.06);
+  color: #51607c;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.stage-chip.running {
+  background: #cde8ff;
+  color: #084a85;
+}
+
+.stage-chip.completed {
+  background: #cfeede;
+  color: #0f5a36;
+}
+
+.stage-chip.failed {
+  background: #ffd6dd;
+  color: #90203a;
+}
+
+.stage-chip.skipped {
+  background: rgba(20, 33, 61, 0.08);
+  color: #6b7790;
 }
 
 .status-chip {
@@ -809,6 +914,15 @@ th {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.82rem;
   line-height: 1.45;
+}
+
+.selected-job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  color: #5f6a82;
+  font-size: 0.82rem;
 }
 
 .featured-result-feature .featured-visual,

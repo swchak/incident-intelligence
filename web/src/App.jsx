@@ -2,6 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const DATASET_KINDS = ["snapshot", "temporal"];
+const STAGE_OPTIONS = {
+  snapshot: [
+    "generate_snapshot",
+    "train_snapshot",
+    "evaluate_snapshot",
+    "explain_snapshot",
+  ],
+  temporal: [
+    "generate_sequence",
+    "build_temporal_features",
+    "train_temporal",
+    "evaluate_temporal",
+    "explain_temporal",
+  ],
+};
 
 async function fetchJson(path, options) {
   const response = await fetch(`${API_BASE_URL}${path}`, options);
@@ -154,11 +169,34 @@ function JobList({ jobs, onSelect, onDelete, selectedJobId, deletingJobId }) {
             onClick={() => onSelect(job)}
             type="button"
           >
-            <span className={`status-chip ${job.status}`}>{job.status}</span>
-            <span className="job-kind">{job.dataset_kind}</span>
-            <span className="job-meta">
-              {job.finished_at ? `finished ${job.finished_at}` : job.created_at}
-            </span>
+            <div className="job-primary-row">
+              <span className={`status-chip ${job.status}`}>{job.status}</span>
+              <span className="job-kind">{job.dataset_kind}</span>
+              <span className="job-meta">
+                {job.finished_at
+                  ? `finished ${job.finished_at}`
+                  : job.current_stage_name
+                    ? `running ${job.current_stage_name}`
+                    : job.created_at}
+              </span>
+            </div>
+            <div className="job-secondary-row">
+              <span className="job-mode">{job.mode}</span>
+              <span className="job-stage-summary">
+                {job.stages.filter((stage) => stage.status === "completed").length}/
+                {job.stages.length} stages
+              </span>
+              <span className="job-stage-list">
+                {job.stages.map((stage) => (
+                  <span
+                    key={stage.stage_id}
+                    className={`stage-chip ${stage.status}`}
+                  >
+                    {stage.stage_name}
+                  </span>
+                ))}
+              </span>
+            </div>
           </button>
           <button
             className="job-delete"
@@ -232,6 +270,8 @@ export default function App() {
   const [assetVersion, setAssetVersion] = useState("");
   const lastCompletedJobRef = useRef("");
   const [runForm, setRunForm] = useState({
+    mode: "full",
+    stages: STAGE_OPTIONS.snapshot,
     fast_mode: false,
     models: "logistic,rf",
     cv: datasetKind === "temporal" ? "3" : "",
@@ -242,6 +282,14 @@ export default function App() {
 
   useEffect(() => {
     refreshDashboard(datasetKind);
+  }, [datasetKind]);
+
+  useEffect(() => {
+    setRunForm((current) => ({
+      ...current,
+      stages: STAGE_OPTIONS[datasetKind],
+      cv: datasetKind === "temporal" && !current.cv ? "3" : current.cv,
+    }));
   }, [datasetKind]);
 
   useEffect(() => {
@@ -360,6 +408,8 @@ export default function App() {
     try {
       const payload = {
         dataset_kind: datasetKind,
+        mode: runForm.mode,
+        stages: runForm.mode === "custom" ? runForm.stages : null,
         fast_mode: runForm.fast_mode,
         models: runForm.models
           ? runForm.models
@@ -449,6 +499,10 @@ export default function App() {
   ];
 
   const visibleJobs = useMemo(() => jobs, [jobs]);
+  const selectedJob = useMemo(
+    () => jobs.find((job) => job.job_id === selectedJobId) || null,
+    [jobs, selectedJobId],
+  );
 
   return (
     <div className="app-shell">
@@ -526,6 +580,63 @@ export default function App() {
             <div className="section-kicker">Start Here</div>
             <div className="section-title">Run Pipeline</div>
             <form onSubmit={submitRun} className="run-form">
+              <div className="stage-mode-row">
+                <span className="form-label">Mode</span>
+                <div className="stage-mode-toggle">
+                  {["full", "custom"].map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={runForm.mode === mode ? "active" : ""}
+                      onClick={() =>
+                        setRunForm((current) => ({
+                          ...current,
+                          mode,
+                          stages:
+                            mode === "full"
+                              ? STAGE_OPTIONS[datasetKind]
+                              : current.stages,
+                        }))
+                      }
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="stage-picker">
+                <span className="form-label">Stages</span>
+                <div className="stage-options">
+                  {STAGE_OPTIONS[datasetKind].map((stageName) => {
+                    const checked = runForm.stages.includes(stageName);
+                    return (
+                      <label key={stageName} className="stage-option">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={runForm.mode === "full"}
+                          onChange={(event) =>
+                            setRunForm((current) => {
+                              const nextStages = event.target.checked
+                                ? [...current.stages, stageName]
+                                : current.stages.filter(
+                                    (item) => item !== stageName,
+                                  );
+                              return {
+                                ...current,
+                                stages: STAGE_OPTIONS[datasetKind].filter((item) =>
+                                  nextStages.includes(item),
+                                ),
+                              };
+                            })
+                          }
+                        />
+                        <span>{stageName}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <label className="form-row">
                 <span className="form-label">Models</span>
                 <input
@@ -629,6 +740,21 @@ export default function App() {
             <div className="section-title section-title-compact">
               Selected Job Log
             </div>
+            {selectedJob ? (
+              <div className="selected-job-meta">
+                <span className={`status-chip ${selectedJob.status}`}>
+                  {selectedJob.status}
+                </span>
+                <span>
+                  {selectedJob.stages.filter((stage) => stage.status === "completed")
+                    .length}
+                  /{selectedJob.stages.length} stages complete
+                </span>
+                {selectedJob.current_stage_name ? (
+                  <span>Current: {selectedJob.current_stage_name}</span>
+                ) : null}
+              </div>
+            ) : null}
             <pre className="log-view">
               {selectedJobLog ||
                 "No log selected yet. Launch a pipeline run to watch logs stream here."}
