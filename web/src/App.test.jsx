@@ -84,7 +84,6 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(await screen.findAllByText("0.8500")).toHaveLength(2);
     expect(screen.getAllByText("artifacts/plots/confusion_matrix.png").length).toBeGreaterThan(0);
-
     fireEvent.click(screen.getByRole("button", { name: /run snapshot pipeline/i }));
 
     await waitFor(() => {

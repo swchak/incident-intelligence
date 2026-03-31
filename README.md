@@ -195,8 +195,21 @@ The dashboard is intended to demonstrate the ML pipeline end to end rather than 
 - viewing latest metrics and artifacts
 - browsing generated plots, reports, and explainability outputs
 - inspecting background job logs from the UI
-- persisting pipeline run history across backend restarts
-- surfacing evaluation visuals like confusion matrices and feature importance plots directly in the UI
+- persisting pipeline run history in SQLite across backend restarts
+- deleting completed and failed pipeline runs from the UI
+- surfacing evaluation and explainability visuals like confusion matrices, feature-importance charts, and SHAP outputs directly in the UI
+
+Dashboard run metadata is currently persisted at:
+
+```text
+artifacts/api_runs/jobs.sqlite3
+```
+
+Associated job logs are stored under:
+
+```text
+artifacts/api_runs/
+```
 
 ## CI And Deployment
 
@@ -241,6 +254,11 @@ Default local deployment URLs:
 - frontend: `http://localhost:8080`
 - backend API: `http://localhost:8000`
 
+The Docker stack now mounts local runtime directories into the API container so generated data, plots, reports, logs, and job-history persistence survive container restarts:
+
+- `./artifacts -> /app/artifacts`
+- `./data -> /app/data`
+
 To stop the stack:
 
 ```bash
@@ -268,10 +286,12 @@ Current backend endpoints include:
 - `GET /api/config`
 - `GET /api/dashboard/summary/{dataset_kind}`
 - `GET /api/artifacts/{dataset_kind}`
+- `GET /api/files/{file_path}`
 - `POST /api/pipeline/run`
 - `GET /api/pipeline/jobs`
 - `GET /api/pipeline/jobs/{job_id}`
 - `GET /api/pipeline/jobs/{job_id}/log`
+- `DELETE /api/pipeline/jobs/{job_id}`
 
 ## Quickstart
 
@@ -287,6 +307,12 @@ python -m pip install -e ".[dev]"
 
 ```bash
 incident-api
+```
+
+Equivalent Make target:
+
+```bash
+make api
 ```
 
 ### 3. Run the frontend dashboard
@@ -503,6 +529,16 @@ Default CLI settings are stored in [pyproject.toml](/Users/swethachakravarthy/Pr
 
 Config loading and CLI override behavior live in [src/incident_intelligence/config.py](/Users/swethachakravarthy/Projects/incident-intelligence/src/incident_intelligence/config.py).
 
+Notable current configuration details:
+
+- snapshot and temporal training data paths are configured separately with:
+  - `train_snapshot`
+  - `val_snapshot`
+  - `train_temporal`
+  - `val_temporal`
+- temporal class balance is configured through the `label_probs` mapping under `[tool.incident_intelligence.sequence_generator]`
+- the frontend can point at a hosted backend through `VITE_API_BASE_URL`
+
 ## Project Structure
 
 ```text
@@ -560,6 +596,15 @@ make explain-local-temporal
 make pipeline
 make pipeline-temporal
 make pipeline-temporal-fast
+make test-backend
+make test-frontend
+make test
+make api
+make web-install
+make web-dev
+make docker-build
+make docker-up
+make docker-down
 ```
 
 `make pipeline` is the snapshot equivalent of `incident-pipeline`, while `make pipeline-temporal` is the Makefile entrypoint for `incident-pipeline --dataset-kind temporal`.
@@ -579,6 +624,23 @@ make pipeline-temporal PIPELINE_ARGS="--fast-mode --models logistic,rf --cv 3 --
 ```
 
 Also note that `make clean` removes both `artifacts/` and `data/`.
+
+## Testing
+
+Run the full automated check suite with:
+
+```bash
+make test
+```
+
+Or run backend and frontend checks separately:
+
+```bash
+make test-backend
+make test-frontend
+```
+
+Frontend tests use Vitest, and backend tests run through the standard library `unittest` discovery path configured in the Makefile.
 
 ## Reproducibility
 
