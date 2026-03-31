@@ -226,7 +226,7 @@ input {
 
 .two-up {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
 }
 
 .card {
@@ -254,10 +254,9 @@ input {
   padding-top: 16px;
 }
 
-.run-ppl-row {
+.summary-card {
   display: grid;
-  gap: 12px;
-  height: 40%
+  gap: 22px;
 }
 
 .section-kicker {
@@ -273,13 +272,11 @@ input {
   display: grid;
   gap: 12px;
   align-content: start;
-  min-height: 0;
 }
 
+.run-ppl-col,
 .card-band-top {
-  display: grid;
-  align-content: start;
-  min-height: 0;
+  display: block;
 }
 
 .form-row {
@@ -289,6 +286,7 @@ input {
   gap: 14px;
   font-weight: 600;
   color: #24314d;
+  min-width: 0;
 }
 
 .run-form input {
@@ -301,6 +299,7 @@ input {
 
 .form-label {
   color: #24314d;
+  min-width: 0;
 }
 
 .checkbox-row {
@@ -370,7 +369,8 @@ input {
 }
 
 .summary-feature {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding-top: 4px;
 }
@@ -380,7 +380,8 @@ input {
 .log-subsection,
 .evaluation-feature,
 .featured-result-feature {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   margin-top: 22px;
   padding-top: 18px;
@@ -396,11 +397,6 @@ input {
 .jobs-subsection .job-list {
   overflow: auto;
   padding-right: 4px;
-}
-
-.summary-stack {
-  display: grid;
-  gap: 18px;
 }
 
 .stat-card {

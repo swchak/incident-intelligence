@@ -636,11 +636,11 @@ export default function App() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card summary-card">
           {loadingSummary ? (
             <div className="muted">Loading summary...</div>
           ) : (
-            <div className="summary-stats-col">
+            <div>
               <div className="card-band-top">
                 <div className="section-title">Latest Summary</div>
                 <SummaryList
