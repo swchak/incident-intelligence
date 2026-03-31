@@ -250,22 +250,11 @@ input {
 
 .form-card {
   background: rgba(255, 255, 255, 0.72);
-  border-top: 4px solid #2a9d8f;
-  padding-top: 16px;
 }
 
 .summary-card {
   display: grid;
   gap: 22px;
-}
-
-.section-kicker {
-  margin-bottom: 8px;
-  color: #2a7b72;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .run-form {
@@ -274,10 +263,104 @@ input {
   align-content: start;
 }
 
+.run-form-main {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.run-form-fields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.tuning-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.tuning-card-title {
+  color: #5b6882;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tuning-inline-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr);
+  gap: 12px;
+}
+
+.compact-field {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.compact-field input {
+  width: 100%;
+}
+
+.compact-field-wide {
+  min-width: 0;
+}
+
+.compact-checkbox-field {
+  grid-template-columns: 80px auto;
+}
+
+.compact-checkbox-field input {
+  width: auto;
+  justify-self: start;
+}
+
+.stage-progress-banner {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  border-radius: 14px;
+  background: rgba(20, 33, 61, 0.03);
+}
+
+.stage-progress-banner > div {
+  display: grid;
+  gap: 4px;
+}
+
+.stage-progress-label {
+  color: #667287;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stage-progress-value {
+  color: #22314f;
+  font-weight: 700;
+}
+
 .stage-mode-row,
 .stage-picker {
   display: grid;
   gap: 10px;
+}
+
+.stage-picker {
+  align-content: start;
+  min-width: 0;
 }
 
 .stage-mode-toggle {
@@ -306,12 +389,43 @@ input {
   gap: 8px;
 }
 
+.stage-helper-copy {
+  color: #60708b;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
 .stage-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
   color: #33415f;
   font-size: 0.92rem;
+}
+
+.stage-option input {
+  margin-top: 2px;
+}
+
+.stage-option-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stage-option-name {
+  line-height: 1.35;
+}
+
+.stage-option.disabled {
+  color: #8a94a9;
+}
+
+.stage-option-hint {
+  color: #8a94a9;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .run-ppl-col,
@@ -354,6 +468,12 @@ input {
   justify-self: start;
 }
 
+.tuning-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 4px;
+}
+
 .primary-button {
   padding: 14px 18px;
   background: #ef476f;
@@ -363,6 +483,22 @@ input {
 }
 
 .primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  padding: 10px 14px;
+  border: 1px solid rgba(20, 33, 61, 0.12);
+  background: rgba(20, 33, 61, 0.04);
+  color: #14213d;
+  border-radius: 12px;
+  font-weight: 700;
+  justify-self: start;
+  cursor: pointer;
+}
+
+.secondary-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -597,6 +733,23 @@ th {
   cursor: not-allowed;
 }
 
+.job-cancel {
+  border: none;
+  background: #f4a261;
+  color: #35210a;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  min-width: 92px;
+}
+
+.job-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .job-mode,
 .job-stage-summary {
   color: #65718a;
@@ -670,6 +823,12 @@ th {
 .status-chip.failed {
   background: #ffd6dd;
   color: #90203a;
+}
+
+.status-chip.cancelling,
+.status-chip.cancelled {
+  background: rgba(244, 162, 97, 0.2);
+  color: #8d4f12;
 }
 
 .artifact-inventory-block {
@@ -947,6 +1106,14 @@ th {
   .two-up,
   .stats-grid,
   .visual-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .run-form-main {
+    grid-template-columns: 1fr;
+  }
+
+  .tuning-inline-grid {
     grid-template-columns: 1fr;
   }
 
