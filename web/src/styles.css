@@ -263,34 +263,29 @@ input {
   align-content: start;
 }
 
+.tabbed-form-shell {
+  display: grid;
+  gap: 0;
+}
+
 .run-form-main {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
+  grid-template-columns: minmax(150px, 25%) minmax(0, 75%);
+  gap: 10px;
+  align-items: stretch;
+  margin-top: -1px;
+  padding: 18px;
+  border: 1px solid rgba(20, 33, 61, 0.08);
+  border-radius: 0 18px 18px 18px;
+  background: rgba(255, 255, 255, 0.44);
 }
 
 .run-form-fields {
   display: grid;
   gap: 12px;
   min-width: 0;
-}
-
-.tuning-card {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(20, 33, 61, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.55);
-}
-
-.tuning-card-title {
-  color: #5b6882;
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  align-content: start;
+  padding: 2px 0 0;
 }
 
 .tuning-inline-grid {
@@ -309,6 +304,12 @@ input {
 
 .compact-field input {
   width: 100%;
+}
+
+.compact-field input:disabled,
+.compact-checkbox-field input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .compact-field-wide {
@@ -355,7 +356,11 @@ input {
 .stage-mode-row,
 .stage-picker {
   display: grid;
-  gap: 10px;
+  gap: 20px;
+}
+
+.stage-mode-row {
+  justify-items: start;
 }
 
 .stage-picker {
@@ -365,34 +370,62 @@ input {
 
 .stage-mode-toggle {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+  align-items: end;
 }
 
 .stage-mode-toggle button {
   border: 1px solid rgba(20, 33, 61, 0.12);
-  background: rgba(20, 33, 61, 0.04);
+  background: rgba(255, 255, 255, 0.44);
   color: #14213d;
-  border-radius: 12px;
-  padding: 8px 12px;
+  border-radius: 12px 12px 0 0;
+  padding: 9px 18px 10px;
   cursor: pointer;
   font-weight: 600;
+  min-width: 96px;
+  text-align: center;
+  user-select: none;
 }
 
 .stage-mode-toggle button.active {
-  background: #14213d;
-  color: #f7f5ef;
+  background: rgba(255, 255, 255, 0.44);
+  color: #14213d;
+  border-bottom-color: rgba(255, 255, 255, 0.44);
+  position: relative;
+  z-index: 1;
 }
 
 .stage-options {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .stage-helper-copy {
+  color: #355070;
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  user-select: text;
+}
+
+.stage-helper-line {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.stage-helper-line-primary {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.stage-helper-line-secondary {
+  font-size: 0.78rem;
   color: #60708b;
-  font-size: 0.84rem;
-  line-height: 1.45;
 }
 
 .stage-option {
@@ -402,6 +435,7 @@ input {
   column-gap: 10px;
   color: #33415f;
   font-size: 0.92rem;
+  user-select: none;
 }
 
 .stage-option input {
@@ -454,6 +488,7 @@ input {
 .form-label {
   color: #24314d;
   min-width: 0;
+  user-select: none;
 }
 
 .checkbox-row {
@@ -480,6 +515,7 @@ input {
   color: white;
   font-weight: 700;
   justify-self: start;
+  user-select: none;
 }
 
 .primary-button:disabled {
@@ -641,6 +677,25 @@ th {
   gap: 6px;
 }
 
+.job-group {
+  display: grid;
+  gap: 8px;
+}
+
+.job-group + .job-group {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(20, 33, 61, 0.08);
+}
+
+.job-group-title {
+  color: #667287;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .job-list-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -694,6 +749,13 @@ th {
   gap: 8px;
   align-items: center;
   min-width: 0;
+}
+
+.job-run-id {
+  color: #667287;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
 }
 
 .job-select {
@@ -1111,6 +1173,7 @@ th {
 
   .run-form-main {
     grid-template-columns: 1fr;
+    border-radius: 0 18px 18px 18px;
   }
 
   .tuning-inline-grid {

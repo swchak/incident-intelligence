@@ -44,6 +44,14 @@ function fileUrl(path, version = "") {
   return `${API_BASE_URL}/api/files/${path}${suffix}`;
 }
 
+function humanizeStageName(stageName) {
+  return stageName.replace(/_/g, " ");
+}
+
+function shortRunId(jobId) {
+  return jobId.slice(0, 8);
+}
+
 function isVisualArtifact(path) {
   return /\.(png|jpg|jpeg|svg|webp)$/i.test(path);
 }
@@ -114,6 +122,63 @@ function stageReadiness(stageName, datasetKind, completedStages, summary, artifa
     enabled: false,
     reason: `Requires ${missingPrereqs.join(" -> ")} first`,
   };
+}
+
+function customStageReadiness(stageName, datasetKind, completedStages) {
+  const orderedStages = STAGE_OPTIONS[datasetKind];
+  const nextStage = orderedStages.find((item) => !completedStages.has(item)) || null;
+
+  if (completedStages.has(stageName)) {
+    return {
+      enabled: false,
+      reason: "Already completed in this staged run",
+    };
+  }
+
+  if (stageName === nextStage) {
+    return { enabled: true, reason: "" };
+  }
+
+  return {
+    enabled: false,
+    reason: nextStage ? `Run ${nextStage} first` : "No remaining stages to run",
+  };
+}
+
+function lockedCustomStageReadiness(stageName, completedStages, nextStage, status) {
+  if (completedStages.has(stageName)) {
+    return {
+      enabled: false,
+      reason: "Already completed in this staged run",
+    };
+  }
+
+  if (stageName === nextStage) {
+    return {
+      enabled: false,
+      reason:
+        status === "queued"
+          ? "Current staged run is queued"
+          : "Wait for the current stage to finish",
+    };
+  }
+
+  return {
+    enabled: false,
+    reason: nextStage ? `Run ${nextStage} first` : "No remaining stages to run",
+  };
+}
+
+function nextStageAfterCurrent(datasetKind, currentStageName) {
+  if (!currentStageName) {
+    return null;
+  }
+  const orderedStages = STAGE_OPTIONS[datasetKind];
+  const currentIndex = orderedStages.indexOf(currentStageName);
+  if (currentIndex === -1) {
+    return null;
+  }
+  return orderedStages[currentIndex + 1] || null;
 }
 
 function StatCard({ title, value, subtitle }) {
@@ -231,90 +296,109 @@ function JobList({
     return <div className="muted">No pipeline jobs started yet.</div>;
   }
 
+  const groupedJobs = [
+    {
+      key: "custom",
+      title: "Staged Runs",
+      items: jobs.filter((job) => job.mode === "custom"),
+    },
+    {
+      key: "full",
+      title: "Full Pipeline Runs",
+      items: jobs.filter((job) => job.mode !== "custom"),
+    },
+  ].filter((group) => group.items.length);
+
   return (
     <div className="job-list">
-      <div className="job-list-header">
-        <div className="job-list-header-main">
-          <span>Status</span>
-          <span>Kind</span>
-          <span>Time</span>
-        </div>
-        <span>Action</span>
-      </div>
-      {jobs.map((job) => (
-        (() => {
-          const stages = Array.isArray(job.stages) ? job.stages : [];
-          const completedStageCount = stages.filter(
-            (stage) => stage.status === "completed",
-          ).length;
-          return (
-        <div
-          key={job.job_id}
-          className={`job-item ${
-            selectedJobId === job.job_id ? "selected" : ""
-          }`}
-        >
-          <button
-            className="job-select"
-            onClick={() => onSelect(job)}
-            type="button"
-          >
-            <div className="job-primary-row">
-              <span className={`status-chip ${job.status}`}>{job.status}</span>
-              <span className="job-kind">{job.dataset_kind}</span>
-              <span className="job-meta">
-                {job.finished_at
-                  ? `finished ${job.finished_at}`
-                  : job.current_stage_name
-                    ? `running ${job.current_stage_name}`
-                    : job.created_at}
-              </span>
+      {groupedJobs.map((group) => (
+        <div className="job-group" key={group.key}>
+          <div className="job-group-title">{group.title}</div>
+          <div className="job-list-header">
+            <div className="job-list-header-main">
+              <span>Status</span>
+              <span>Kind</span>
+              <span>Time</span>
             </div>
-            <div className="job-secondary-row">
-              <span className="job-mode">{job.mode}</span>
-              <span className="job-stage-summary">
-                {completedStageCount}/{stages.length} stages
-              </span>
-              <span className="job-stage-list">
-                {stages.map((stage) => (
-                  <span
-                    key={stage.stage_id}
-                    className={`stage-chip ${stage.status}`}
+            <span>Action</span>
+          </div>
+          {group.items.map((job) => (
+            (() => {
+              const stages = Array.isArray(job.stages) ? job.stages : [];
+              const completedStageCount = stages.filter(
+                (stage) => stage.status === "completed",
+              ).length;
+              return (
+                <div
+                  key={job.job_id}
+                  className={`job-item ${
+                    selectedJobId === job.job_id ? "selected" : ""
+                  }`}
+                >
+                  <button
+                    className="job-select"
+                    onClick={() => onSelect(job)}
+                    type="button"
                   >
-                    {stage.stage_name}
-                  </span>
-                ))}
-              </span>
-            </div>
-          </button>
-          {job.status === "queued" || job.status === "running" || job.status === "cancelling" ? (
-            <button
-              className="job-cancel"
-              type="button"
-              onClick={() => onCancel(job.job_id)}
-              disabled={cancellingJobId === job.job_id || job.status === "cancelling"}
-              aria-label={`Cancel job ${job.job_id}`}
-              title="Cancel job"
-            >
-              {cancellingJobId === job.job_id || job.status === "cancelling"
-                ? "Cancelling..."
-                : "Cancel Run"}
-            </button>
-          ) : (
-            <button
-              className="job-delete"
-              type="button"
-              onClick={() => onDelete(job.job_id)}
-              disabled={deletingJobId === job.job_id}
-              aria-label={`Delete job ${job.job_id}`}
-              title="Delete job"
-            >
-              {deletingJobId === job.job_id ? "Deleting..." : "Delete Run"}
-            </button>
-          )}
+                    <div className="job-primary-row">
+                      <span className={`status-chip ${job.status}`}>{job.status}</span>
+                      <span className="job-kind">{job.dataset_kind}</span>
+                      <span className="job-meta">
+                        {job.finished_at
+                          ? `finished ${job.finished_at}`
+                          : job.current_stage_name
+                            ? `running ${job.current_stage_name}`
+                            : job.created_at}
+                      </span>
+                    </div>
+                    <div className="job-secondary-row">
+                      <span className="job-mode">{job.mode}</span>
+                      <span className="job-run-id">run {shortRunId(job.job_id)}</span>
+                      <span className="job-stage-summary">
+                        {completedStageCount}/{stages.length} stages
+                      </span>
+                      <span className="job-stage-list">
+                        {stages.map((stage) => (
+                          <span
+                            key={stage.stage_id}
+                            className={`stage-chip ${stage.status}`}
+                          >
+                            {stage.stage_name}
+                          </span>
+                        ))}
+                      </span>
+                    </div>
+                  </button>
+                  {job.status === "queued" || job.status === "running" || job.status === "cancelling" ? (
+                    <button
+                      className="job-cancel"
+                      type="button"
+                      onClick={() => onCancel(job.job_id)}
+                      disabled={cancellingJobId === job.job_id || job.status === "cancelling"}
+                      aria-label={`Cancel job ${job.job_id}`}
+                      title="Cancel job"
+                    >
+                      {cancellingJobId === job.job_id || job.status === "cancelling"
+                        ? "Cancelling..."
+                        : "Cancel Run"}
+                    </button>
+                  ) : (
+                    <button
+                      className="job-delete"
+                      type="button"
+                      onClick={() => onDelete(job.job_id)}
+                      disabled={deletingJobId === job.job_id}
+                      aria-label={`Delete job ${job.job_id}`}
+                      title="Delete job"
+                    >
+                      {deletingJobId === job.job_id ? "Deleting..." : "Delete Run"}
+                    </button>
+                  )}
+                </div>
+              );
+            })()
+          ))}
         </div>
-          );
-        })()
       ))}
     </div>
   );
@@ -360,6 +444,7 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedJobLog, setSelectedJobLog] = useState("");
+  const [forceNewCustomRun, setForceNewCustomRun] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState(null);
   const [cancellingJobId, setCancellingJobId] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -368,6 +453,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [assetVersion, setAssetVersion] = useState("");
   const lastCompletedJobRef = useRef("");
+  const previousModeRef = useRef("full");
   const [runForm, setRunForm] = useState({
     mode: "full",
     stages: STAGE_OPTIONS.snapshot,
@@ -389,6 +475,7 @@ export default function App() {
       stages: STAGE_OPTIONS[datasetKind],
       cv: datasetKind === "temporal" && !current.cv ? "3" : current.cv,
     }));
+    setForceNewCustomRun(false);
   }, [datasetKind]);
 
   useEffect(() => {
@@ -396,12 +483,6 @@ export default function App() {
     const timer = window.setInterval(refreshJobs, 3000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!selectedJobId && jobs.length) {
-      setSelectedJobId(jobs[0].job_id);
-    }
-  }, [jobs, selectedJobId]);
 
   useEffect(() => {
     if (!selectedJobId) {
@@ -474,10 +555,8 @@ export default function App() {
       await fetchJson(`/api/pipeline/jobs/${jobId}`, { method: "DELETE" });
       const nextJobs = jobs.filter((job) => job.job_id !== jobId);
       if (selectedJobId === jobId) {
-        setSelectedJobId(nextJobs[0]?.job_id ?? null);
-        if (!nextJobs.length) {
-          setSelectedJobLog("");
-        }
+        setSelectedJobId(null);
+        setSelectedJobLog("");
       }
       await refreshJobs();
     } catch (err) {
@@ -500,14 +579,29 @@ export default function App() {
     }
   }
 
+  function selectDatasetKind(kind) {
+    setForceNewCustomRun(false);
+    setSelectedJobId(null);
+    setSelectedJobLog("");
+    setDatasetKind(kind);
+  }
+
   function selectJob(job) {
+    setForceNewCustomRun(false);
+    setRunForm((current) => ({
+      ...current,
+      mode: job.mode === "custom" ? "custom" : "full",
+      stages:
+        job.mode === "full"
+          ? STAGE_OPTIONS[job.dataset_kind]
+          : current.stages,
+      cv:
+        job.dataset_kind === "temporal" && !current.cv ? "3" : current.cv,
+    }));
     setSelectedJobId(job.job_id);
     setSelectedJobLog("");
     loadJobLog(job.job_id);
-    if (job.dataset_kind !== datasetKind) {
-      setDatasetKind(job.dataset_kind);
-      return;
-    }
+    setDatasetKind(job.dataset_kind);
     refreshDashboard(job.dataset_kind, job.job_id);
   }
 
@@ -532,6 +626,7 @@ export default function App() {
           sourceJob?.status === "completed"
             ? sourceJob.job_id
             : null,
+        force_new_run: nextMode === "custom" && forceNewCustomRun,
         fast_mode: runForm.fast_mode,
         models: runForm.models
           ? runForm.models
@@ -625,39 +720,88 @@ export default function App() {
     () => jobs.find((job) => job.job_id === selectedJobId) || null,
     [jobs, selectedJobId],
   );
-  const sourceJob = useMemo(() => {
+  const selectedCustomRun = useMemo(() => {
+    if (runForm.mode !== "custom") {
+      return null;
+    }
+    if (forceNewCustomRun) {
+      return null;
+    }
     if (
       selectedJob &&
       selectedJob.dataset_kind === datasetKind &&
-      selectedJob.status === "completed"
+      selectedJob.mode === "custom"
     ) {
       return selectedJob;
     }
-    return (
-      jobs.find(
-        (job) => job.dataset_kind === datasetKind && job.status === "completed",
-      ) || null
-    );
-  }, [datasetKind, jobs, selectedJob]);
-  const completedStages = useMemo(
-    () => completedStageNamesForJobs(jobs, datasetKind, sourceJob),
-    [jobs, datasetKind, sourceJob],
+    return null;
+  }, [datasetKind, forceNewCustomRun, runForm.mode, selectedJob]);
+  const customRunLocked = Boolean(
+    selectedCustomRun &&
+      ["queued", "running", "cancelling"].includes(selectedCustomRun.status),
   );
+  const sourceJob =
+    selectedCustomRun &&
+    ["completed", "failed", "cancelled"].includes(selectedCustomRun.status)
+      ? selectedCustomRun
+      : null;
+  const completedStages = useMemo(() => {
+    if (runForm.mode === "custom" && !selectedCustomRun) {
+      return new Set();
+    }
+    return completedStageNamesForJobs(jobs, datasetKind, selectedCustomRun);
+  }, [jobs, datasetKind, runForm.mode, selectedCustomRun]);
+  const nextIncompleteStage = useMemo(
+    () =>
+      STAGE_OPTIONS[datasetKind].find((stageName) => !completedStages.has(stageName)) ||
+      null,
+    [completedStages, datasetKind],
+  );
+  const lockedPreviewStage = useMemo(() => {
+    if (!customRunLocked || !selectedCustomRun) {
+      return nextIncompleteStage;
+    }
+    if (selectedCustomRun.status === "queued") {
+      return selectedCustomRun.current_stage_name || nextIncompleteStage;
+    }
+    return (
+      nextStageAfterCurrent(datasetKind, selectedCustomRun.current_stage_name) ||
+      nextIncompleteStage
+    );
+  }, [customRunLocked, datasetKind, nextIncompleteStage, selectedCustomRun]);
   const stageAvailability = useMemo(
     () =>
       Object.fromEntries(
         STAGE_OPTIONS[datasetKind].map((stageName) => [
           stageName,
-          stageReadiness(
-            stageName,
-            datasetKind,
-            completedStages,
-            summary,
-            artifactEntries,
-          ),
+          runForm.mode === "custom"
+            ? customRunLocked
+              ? lockedCustomStageReadiness(
+                  stageName,
+                  completedStages,
+                  lockedPreviewStage,
+                  selectedCustomRun?.status ?? "running",
+                )
+              : customStageReadiness(stageName, datasetKind, completedStages)
+            : stageReadiness(
+                stageName,
+                datasetKind,
+                completedStages,
+                summary,
+                artifactEntries,
+              ),
         ]),
       ),
-    [artifactEntries, completedStages, datasetKind, summary],
+    [
+      artifactEntries,
+      completedStages,
+      customRunLocked,
+      datasetKind,
+      lockedPreviewStage,
+      runForm.mode,
+      selectedCustomRun?.status,
+      summary,
+    ],
   );
   const lastSuccessfulStage = useMemo(() => {
     const ordered = STAGE_OPTIONS[datasetKind];
@@ -667,22 +811,140 @@ export default function App() {
     return completedOrdered.at(-1) || null;
   }, [completedStages, datasetKind]);
   const nextRunnableStage = useMemo(
-    () =>
-      STAGE_OPTIONS[datasetKind].find(
-        (stageName) =>
-          !completedStages.has(stageName) && stageAvailability[stageName]?.enabled,
-      ) || null,
-    [completedStages, datasetKind, stageAvailability],
+    () => (customRunLocked ? lockedPreviewStage : STAGE_OPTIONS[datasetKind].find(
+      (stageName) =>
+        !completedStages.has(stageName) && stageAvailability[stageName]?.enabled,
+    ) || null),
+    [completedStages, customRunLocked, datasetKind, lockedPreviewStage, stageAvailability],
   );
+  const customRunComplete =
+    runForm.mode === "custom" &&
+    Boolean(selectedCustomRun) &&
+    completedStages.size === STAGE_OPTIONS[datasetKind].length;
+  const canStartNewCustomRun =
+    runForm.mode === "custom" &&
+    !forceNewCustomRun &&
+    Boolean(selectedCustomRun);
   const selectedStageSummary = useMemo(() => {
     if (runForm.mode === "full") {
-      return `All ${datasetKind} stages will run in order.`;
+      return {
+        primary: `All ${datasetKind} stages will run in order.`,
+        secondary: null,
+      };
+    }
+    if (customRunComplete && selectedCustomRun) {
+      return {
+        primary: `Staged run ${shortRunId(selectedCustomRun.job_id)} is complete.`,
+        secondary: "There are no remaining stages to run.",
+      };
+    }
+    if (customRunLocked && selectedCustomRun) {
+      return {
+        primary: `Staged run ${shortRunId(selectedCustomRun.job_id)} is ${selectedCustomRun.status}.`,
+        secondary:
+          selectedCustomRun.current_stage_name
+            ? `Wait for ${selectedCustomRun.current_stage_name} to finish before continuing, or start a new staged run.`
+            : "Wait for the active stage to finish before continuing, or start a new staged run.",
+      };
     }
     if (!runForm.stages.length) {
-      return "Select at least one stage to run.";
+      return {
+        primary: "Select at least one stage to run.",
+        secondary: null,
+      };
     }
-    return `Selected stages: ${runForm.stages.join(", ")}`;
-  }, [datasetKind, runForm.mode, runForm.stages]);
+    if (sourceJob) {
+      return {
+        primary: `Continuing staged run ${shortRunId(sourceJob.job_id)} with: ${runForm.stages.join(", ")}`,
+        secondary: null,
+      };
+    }
+    return {
+      primary: `Starting a staged run with: ${runForm.stages.join(", ")}`,
+      secondary: "Select a staged run below to continue it later.",
+    };
+  }, [
+    customRunComplete,
+    customRunLocked,
+    datasetKind,
+    runForm.mode,
+    runForm.stages,
+    selectedCustomRun,
+    sourceJob,
+  ]);
+
+  const trainStageName = datasetKind === "snapshot" ? "train_snapshot" : "train_temporal";
+  const tuningEnabled =
+    runForm.mode === "full" || runForm.stages.includes(trainStageName);
+  const runButtonLabel = useMemo(() => {
+    if (submitting) {
+      return "Starting...";
+    }
+    if (runForm.mode === "full") {
+      return `Run full ${datasetKind} pipeline`;
+    }
+    if (runForm.stages.length === 1) {
+      return `Run ${humanizeStageName(runForm.stages[0])}`;
+    }
+    return `Run custom ${datasetKind} stages`;
+  }, [datasetKind, runForm.mode, runForm.stages, submitting]);
+
+  useEffect(() => {
+    const previousMode = previousModeRef.current;
+    previousModeRef.current = runForm.mode;
+    if (runForm.mode !== "custom") {
+      setForceNewCustomRun(false);
+    }
+    if (runForm.mode !== "custom" || previousMode === "custom") {
+      return;
+    }
+    setRunForm((current) => ({
+      ...current,
+      stages: nextRunnableStage ? [nextRunnableStage] : [],
+    }));
+  }, [nextRunnableStage, runForm.mode]);
+
+  useEffect(() => {
+    if (runForm.mode !== "custom") {
+      return;
+    }
+    setRunForm((current) => {
+      const filteredStages = customRunLocked
+        ? current.stages.filter((stageName) => stageName === nextIncompleteStage)
+        : current.stages.filter((stageName) => stageAvailability[stageName]?.enabled);
+      if (filteredStages.length === current.stages.length) {
+        return current;
+      }
+      return {
+        ...current,
+        stages:
+          filteredStages.length > 0
+            ? filteredStages
+            : nextRunnableStage
+              ? [nextRunnableStage]
+              : [],
+      };
+    });
+  }, [customRunLocked, nextIncompleteStage, nextRunnableStage, runForm.mode, stageAvailability]);
+
+  useEffect(() => {
+    if (runForm.mode !== "custom" || !forceNewCustomRun) {
+      return;
+    }
+    setRunForm((current) => {
+      const nextStages = nextRunnableStage ? [nextRunnableStage] : [];
+      const sameStages =
+        current.stages.length === nextStages.length &&
+        current.stages.every((stage, index) => stage === nextStages[index]);
+      if (sameStages) {
+        return current;
+      }
+      return {
+        ...current,
+        stages: nextStages,
+      };
+    });
+  }, [forceNewCustomRun, nextRunnableStage, runForm.mode]);
 
   return (
     <div className="app-shell">
@@ -744,7 +1006,7 @@ export default function App() {
                   key={kind}
                   type="button"
                   className={datasetKind === kind ? "active" : ""}
-                  onClick={() => setDatasetKind(kind)}
+                  onClick={() => selectDatasetKind(kind)}
                 >
                   {kind}
                 </button>
@@ -759,110 +1021,112 @@ export default function App() {
           <div className="run-ppl-col">
             <div className="section-title">Run Pipeline</div>
             <form onSubmit={submitRun} className="run-form">
-              <div className="stage-progress-banner">
-                <div>
-                  <span className="stage-progress-label">Last successful stage</span>
-                  <span className="stage-progress-value">
-                    {lastSuccessfulStage || "None yet"}
-                  </span>
-                </div>
-                <div>
-                  <span className="stage-progress-label">Next recommended</span>
-                  <span className="stage-progress-value">
-                    {nextRunnableStage || "All stages completed once"}
-                  </span>
-                </div>
-              </div>
-              <div className="stage-mode-row">
-                <span className="form-label">Mode</span>
-                <div className="stage-mode-toggle">
-                  {["full", "custom"].map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={runForm.mode === mode ? "active" : ""}
-                      onClick={() =>
-                        setRunForm((current) => ({
-                          ...current,
-                          mode,
-                          stages:
-                            mode === "full"
-                              ? STAGE_OPTIONS[datasetKind]
-                              : current.stages,
-                        }))
-                      }
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="run-form-main">
-                <div className="stage-picker">
-                  <span className="form-label">Stages</span>
-                  <div className="stage-options">
-                    {STAGE_OPTIONS[datasetKind].map((stageName) => {
-                      const checked = runForm.stages.includes(stageName);
-                      const availability = stageAvailability[stageName];
-                      return (
-                        <label
-                          key={stageName}
-                          className={`stage-option ${availability?.enabled ? "" : "disabled"}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={runForm.mode === "full" || !availability?.enabled}
-                            onChange={(event) =>
-                              setRunForm((current) => {
-                                const nextStages = event.target.checked
-                                  ? [...current.stages, stageName]
-                                  : current.stages.filter(
-                                      (item) => item !== stageName,
-                                    );
-                                return {
-                                  ...current,
-                                  stages: STAGE_OPTIONS[datasetKind].filter((item) =>
-                                    nextStages.includes(item),
-                                  ),
-                                };
-                              })
-                            }
-                          />
-                          <div className="stage-option-copy">
-                            <span className="stage-option-name">{stageName}</span>
-                            {!availability?.enabled ? (
-                              <span className="stage-option-hint">{availability.reason}</span>
-                            ) : null}
-                          </div>
-                        </label>
-                      );
-                    })}
+              <div className="tabbed-form-shell">
+                <div className="stage-mode-row">
+                  <span className="form-label">Mode</span>
+                  <div className="stage-mode-toggle">
+                    {["full", "custom"].map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={runForm.mode === mode ? "active" : ""}
+                        onClick={() =>
+                          setRunForm((current) => ({
+                            ...current,
+                            mode,
+                            stages:
+                              mode === "full"
+                                ? STAGE_OPTIONS[datasetKind]
+                                : current.stages,
+                          }))
+                        }
+                      >
+                        {mode}
+                      </button>
+                    ))}
                   </div>
-                  <div className="stage-helper-copy">{selectedStageSummary}</div>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={submitting || !nextRunnableStage}
-                    onClick={() =>
-                      nextRunnableStage
-                        ? startRun([nextRunnableStage], "custom")
-                        : undefined
-                    }
-                  >
-                    {nextRunnableStage
-                      ? `Run next stage: ${nextRunnableStage}`
-                      : "No next stage available"}
-                  </button>
                 </div>
-                <div className="run-form-fields">
-                  <div className="tuning-card">
-                    <div className="tuning-card-title">Tuning Parameters</div>
+                <div className="run-form-main">
+                  <div className="stage-picker">
+                    <span className="form-label">Stages</span>
+                    <div className="stage-options">
+                      {STAGE_OPTIONS[datasetKind].map((stageName) => {
+                        const checked =
+                          !customRunComplete &&
+                          (customRunLocked
+                            ? stageName === nextIncompleteStage
+                            : runForm.stages.includes(stageName));
+                        const availability = stageAvailability[stageName];
+                        return (
+                          <label
+                            key={stageName}
+                            className={`stage-option ${availability?.enabled ? "" : "disabled"}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={
+                                runForm.mode === "full" ||
+                                customRunComplete ||
+                                !availability?.enabled
+                              }
+                              onChange={(event) =>
+                                setRunForm((current) => {
+                                  const nextStages = event.target.checked
+                                    ? [...current.stages, stageName]
+                                    : current.stages.filter(
+                                        (item) => item !== stageName,
+                                      );
+                                  return {
+                                    ...current,
+                                    stages: STAGE_OPTIONS[datasetKind].filter((item) =>
+                                      nextStages.includes(item),
+                                    ),
+                                  };
+                                })
+                              }
+                            />
+                            <div className="stage-option-copy">
+                              <span className="stage-option-name">{stageName}</span>
+                              {!availability?.enabled ? (
+                                <span className="stage-option-hint">{availability.reason}</span>
+                              ) : null}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="stage-helper-copy">
+                      <span className="stage-helper-line stage-helper-line-primary">
+                        {selectedStageSummary.primary}
+                      </span>
+                      {selectedStageSummary.secondary ? (
+                        <span className="stage-helper-line stage-helper-line-secondary">
+                          * {selectedStageSummary.secondary}
+                        </span>
+                      ) : null}
+                    </div>
+                    {canStartNewCustomRun ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          setSelectedJobId(null);
+                          setSelectedJobLog("");
+                          setForceNewCustomRun(true);
+                        }}
+                      >
+                        Start new staged run
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="run-form-fields">
                     <div className="tuning-inline-grid">
                       <label className="compact-field compact-field-wide">
                         <span className="form-label">Models</span>
                         <input
                           value={runForm.models}
+                          disabled={!tuningEnabled}
                           onChange={(event) =>
                             setRunForm((current) => ({
                               ...current,
@@ -876,6 +1140,7 @@ export default function App() {
                         <span className="form-label">CV</span>
                         <input
                           value={runForm.cv}
+                          disabled={!tuningEnabled}
                           onChange={(event) =>
                             setRunForm((current) => ({
                               ...current,
@@ -889,6 +1154,7 @@ export default function App() {
                         <span className="form-label">n_jobs</span>
                         <input
                           value={runForm.n_jobs}
+                          disabled={!tuningEnabled}
                           onChange={(event) =>
                             setRunForm((current) => ({
                               ...current,
@@ -902,6 +1168,7 @@ export default function App() {
                         <span className="form-label">Verbose</span>
                         <input
                           value={runForm.verbose}
+                          disabled={!tuningEnabled}
                           onChange={(event) =>
                             setRunForm((current) => ({
                               ...current,
@@ -915,6 +1182,7 @@ export default function App() {
                         <span className="form-label">Scoring</span>
                         <input
                           value={runForm.scoring}
+                          disabled={!tuningEnabled}
                           onChange={(event) =>
                             setRunForm((current) => ({
                               ...current,
@@ -929,6 +1197,7 @@ export default function App() {
                         <input
                           type="checkbox"
                           checked={runForm.fast_mode}
+                          disabled={!tuningEnabled}
                           onChange={(event) =>
                             setRunForm((current) => ({
                               ...current,
@@ -938,22 +1207,25 @@ export default function App() {
                         />
                       </label>
                     </div>
-                    <div className="tuning-actions">
-                      <button
-                        className="primary-button"
-                        type="submit"
-                        disabled={
-                          submitting ||
-                          (runForm.mode === "custom" && runForm.stages.length === 0)
-                        }
-                      >
-                        {submitting
-                          ? "Starting..."
-                          : runForm.mode === "full"
-                            ? `Run full ${datasetKind} pipeline`
-                            : `Run custom ${datasetKind} stages`}
-                      </button>
-                    </div>
+                    {!tuningEnabled ? (
+                      <div className="stage-option-hint">
+                        Tuning parameters apply only when a train stage is selected.
+                      </div>
+                    ) : null}
+                    {!customRunComplete ? (
+                      <div className="tuning-actions">
+                        <button
+                          className="primary-button"
+                          type="submit"
+                          disabled={
+                            submitting ||
+                            (runForm.mode === "custom" && runForm.stages.length === 0)
+                          }
+                        >
+                          {runButtonLabel}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

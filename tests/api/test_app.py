@@ -154,6 +154,160 @@ class DashboardApiTests(unittest.TestCase):
         save_jobs_mock.assert_called_once()
         thread_mock.return_value.start.assert_called_once()
 
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_continues_existing_staged_run(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        existing_run = PipelineRun(
+            job_id="job-123",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-123:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+        )
+
+        with patch("incident_intelligence.api.app._JOBS", {"job-123": existing_run}):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="snapshot",
+                    mode="custom",
+                    stages=["train_snapshot"],
+                    source_job_id="job-123",
+                )
+            )
+
+        self.assertEqual(response.job_id, "job-123")
+        self.assertEqual(response.status, "queued")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_snapshot", "train_snapshot"],
+        )
+        self.assertEqual(response.stages[1].stage_order, 1)
+        save_jobs_mock.assert_called_once()
+        thread_mock.return_value.start.assert_called_once()
+
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_without_source_job_id_continues_latest_staged_run(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        older_run = PipelineRun(
+            job_id="job-old",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-old:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+            created_at="2026-04-01T00:00:00+00:00",
+            finished_at="2026-04-01T00:05:00+00:00",
+        )
+        latest_run = PipelineRun(
+            job_id="job-latest",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-latest:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+            created_at="2026-04-01T01:00:00+00:00",
+            finished_at="2026-04-01T01:05:00+00:00",
+        )
+
+        with patch(
+            "incident_intelligence.api.app._JOBS",
+            {"job-old": older_run, "job-latest": latest_run},
+        ):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="snapshot",
+                    mode="custom",
+                    stages=["train_snapshot"],
+                )
+            )
+
+        self.assertEqual(response.job_id, "job-latest")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_snapshot", "train_snapshot"],
+        )
+
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_force_new_run_does_not_continue_latest_staged_run(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        latest_run = PipelineRun(
+            job_id="job-latest",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-latest:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+            created_at="2026-04-01T01:00:00+00:00",
+            finished_at="2026-04-01T01:05:00+00:00",
+        )
+
+        with patch(
+            "incident_intelligence.api.app._JOBS",
+            {"job-latest": latest_run},
+        ):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="snapshot",
+                    mode="custom",
+                    stages=["generate_snapshot"],
+                    force_new_run=True,
+                )
+            )
+
+        self.assertNotEqual(response.job_id, "job-latest")
+        self.assertEqual(response.mode, "custom")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_snapshot"],
+        )
+        save_jobs_mock.assert_called_once()
+        thread_mock.return_value.start.assert_called_once()
+        save_jobs_mock.assert_called_once()
+        thread_mock.return_value.start.assert_called_once()
+
     def test_get_project_file_rejects_outside_allowed_roots(self) -> None:
         with self.assertRaises(HTTPException) as exc_info:
             get_project_file("../secrets.txt")

@@ -64,6 +64,8 @@ TEMPORAL_STAGE_ORDER: list[StageName] = [
     "explain_temporal",
 ]
 
+FINAL_RUN_STATUSES: set[str] = {"completed", "failed", "cancelled"}
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -81,6 +83,7 @@ class PipelineRunRequest(BaseModel):
     mode: RunMode = "full"
     stages: list[str] | None = None
     source_job_id: str | None = None
+    force_new_run: bool = False
     fast_mode: bool = False
     models: list[str] | None = None
     cv: int | None = Field(default=None, ge=2)
@@ -418,6 +421,27 @@ def _resolve_requested_stages(request: PipelineRunRequest) -> list[StageName]:
     return [stage for stage in valid_stages if stage in requested]
 
 
+def _terminal_run(run: PipelineRun) -> bool:
+    return run.status in FINAL_RUN_STATUSES
+
+
+def _latest_completed_custom_run(dataset_kind: DatasetKind) -> PipelineRun | None:
+    candidates = [
+        run
+        for run in _JOBS.values()
+        if run.dataset_kind == dataset_kind
+        and run.mode == "custom"
+        and _terminal_run(run)
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda item: item.finished_at or item.created_at,
+        reverse=True,
+    )[0]
+
+
 def _artifact_dir(base_dir: str, dataset_kind: DatasetKind) -> str:
     if dataset_kind == "snapshot":
         return base_dir
@@ -721,26 +745,35 @@ def _stage_command(
     raise HTTPException(status_code=500, detail=f"Unhandled stage '{stage_name}'")
 
 
-def _build_stages(job_id: str, request: PipelineRunRequest) -> list[PipelineStage]:
+def _build_stages(
+    job_id: str,
+    request: PipelineRunRequest,
+    *,
+    starting_order: int = 0,
+    prior_stages: list[StageName] | None = None,
+) -> list[PipelineStage]:
     stages: list[PipelineStage] = []
     requested_stages = _resolve_requested_stages(request)
-    for order, stage_name in enumerate(requested_stages):
+    existing_stages = list(prior_stages or [])
+    for offset, stage_name in enumerate(requested_stages):
+        stage_order = starting_order + offset
         log_dir = API_RUNS_DIR / job_id
-        log_path = log_dir / f"{order + 1:02d}_{stage_name}.log"
+        log_path = log_dir / f"{stage_order + 1:02d}_{stage_name}.log"
         stages.append(
             PipelineStage(
                 stage_id=f"{job_id}:{stage_name}",
                 stage_name=stage_name,
-                stage_order=order,
+                stage_order=stage_order,
                 command=_stage_command(
                     stage_name,
                     request,
                     job_id=job_id,
-                    prior_stages=requested_stages[:order],
+                    prior_stages=existing_stages,
                 ),
                 log_path=str(log_path),
             )
         )
+        existing_stages.append(stage_name)
     return stages
 
 
@@ -1058,12 +1091,86 @@ def get_project_file(file_path: str) -> FileResponse:
 
 @app.post("/api/pipeline/run", response_model=PipelineJobResponse)
 def run_pipeline(request: PipelineRunRequest) -> PipelineJobResponse:
+    requested_stages = list(_resolve_requested_stages(request))
+    continuation_run: PipelineRun | None = None
+
+    with _JOBS_LOCK:
+        if request.mode == "custom":
+            source_run = None
+            if request.source_job_id:
+                source_run = _JOBS.get(request.source_job_id)
+                if source_run is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Unknown source_job_id '{request.source_job_id}'",
+                    )
+            elif not request.force_new_run:
+                source_run = _latest_completed_custom_run(request.dataset_kind)
+
+            if source_run is None:
+                pass
+            elif source_run.dataset_kind != request.dataset_kind:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Job '{source_run.job_id}' does not belong to "
+                        f"dataset_kind '{request.dataset_kind}'"
+                    ),
+                )
+            elif source_run.mode != "custom":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only staged custom runs can be continued",
+                )
+            elif not _terminal_run(source_run):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Job '{source_run.job_id}' is still {source_run.status}",
+                )
+            else:
+                existing_stage_names = [stage.stage_name for stage in source_run.stages]
+                duplicate_stages = [
+                    stage_name for stage_name in requested_stages if stage_name in existing_stage_names
+                ]
+                if duplicate_stages:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Cannot add stages already present on the staged run: "
+                            + ", ".join(duplicate_stages)
+                        ),
+                    )
+
+                appended_stages = _build_stages(
+                    source_run.job_id,
+                    request,
+                    starting_order=len(source_run.stages),
+                    prior_stages=existing_stage_names,
+                )
+                source_run.requested_stages.extend(requested_stages)
+                source_run.stages.extend(appended_stages)
+                source_run.status = "queued"
+                source_run.current_stage_name = None
+                source_run.finished_at = None
+                source_run.error_message = None
+                continuation_run = source_run
+                _save_jobs()
+
+    if continuation_run is not None:
+        worker = threading.Thread(
+            target=_run_pipeline_job,
+            args=(continuation_run.job_id,),
+            daemon=True,
+        )
+        worker.start()
+        return _job_response(continuation_run)
+
     job_id = uuid.uuid4().hex
     run = PipelineRun(
         job_id=job_id,
         dataset_kind=request.dataset_kind,
         mode=request.mode,
-        requested_stages=list(_resolve_requested_stages(request)),
+        requested_stages=requested_stages,
         stages=_build_stages(job_id, request),
     )
     with _JOBS_LOCK:
