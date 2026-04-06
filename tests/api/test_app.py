@@ -4,20 +4,23 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-
 from fastapi import HTTPException
 
 from incident_intelligence.api.app import (
-    PipelineJob,
+    PipelineRun,
     PipelineRunRequest,
+    PipelineStage,
+    _build_stages,
+    _run_pipeline_job,
     _load_jobs,
     _save_jobs,
     artifacts,
+    cancel_pipeline_job,
     dashboard_summary,
     delete_pipeline_job,
     get_pipeline_job_log,
-    health,
     get_project_file,
+    health,
     run_pipeline,
 )
 
@@ -53,14 +56,27 @@ class DashboardApiTests(unittest.TestCase):
         }
         safe_load_json_mock.side_effect = [
             {"models": [{"model_name": "Random_Forest_pipeline"}]},
-            {"models": [{"model_name": "Random_Forest_pipeline", "metrics": {"accuracy": 0.88}}]},
+            {
+                "models": [
+                    {
+                        "model_name": "Random_Forest_pipeline",
+                        "metrics": {"accuracy": 0.88},
+                    }
+                ]
+            },
         ]
 
         body = dashboard_summary("temporal")
 
         self.assertEqual(body["dataset_kind"], "temporal")
-        self.assertEqual(body["datasets"]["eval"], "data/processed/incident_temporal_eval.csv")
-        self.assertEqual(body["evaluation_metrics"]["models"][0]["model_name"], "Random_Forest_pipeline")
+        self.assertEqual(
+            body["datasets"]["eval"],
+            "data/processed/incident_temporal_eval.csv",
+        )
+        self.assertEqual(
+            body["evaluation_metrics"]["models"][0]["model_name"],
+            "Random_Forest_pipeline",
+        )
 
     @patch("incident_intelligence.api.app._dashboard_paths")
     @patch("incident_intelligence.api.app._list_artifacts")
@@ -86,20 +102,14 @@ class DashboardApiTests(unittest.TestCase):
 
         self.assertEqual(body["dataset_kind"], "snapshot")
         self.assertIn("plots_dir", body["artifacts"])
-        self.assertEqual(body["artifacts"]["best_model"][0]["path"], "/tmp/models/best_model.joblib")
+        self.assertEqual(
+            body["artifacts"]["best_model"][0]["path"],
+            "/tmp/models/best_model.joblib",
+        )
 
     @patch("incident_intelligence.api.app.threading.Thread")
-    @patch("incident_intelligence.api.app._build_pipeline_command")
     @patch("incident_intelligence.api.app._save_jobs")
-    def test_run_pipeline_queues_job(self, save_jobs_mock, build_command_mock, thread_mock) -> None:
-        build_command_mock.return_value = [
-            "python",
-            "-m",
-            "incident_intelligence.cli.pipeline",
-            "--dataset-kind",
-            "snapshot",
-        ]
-
+    def test_run_pipeline_queues_staged_run(self, save_jobs_mock, thread_mock) -> None:
         response = run_pipeline(
             PipelineRunRequest(
                 dataset_kind="snapshot",
@@ -111,9 +121,264 @@ class DashboardApiTests(unittest.TestCase):
 
         self.assertEqual(response.dataset_kind, "snapshot")
         self.assertEqual(response.status, "queued")
-        self.assertEqual(response.command, build_command_mock.return_value)
+        self.assertEqual(response.mode, "full")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            [
+                "generate_snapshot",
+                "train_snapshot",
+                "evaluate_snapshot",
+                "explain_snapshot",
+            ],
+        )
         save_jobs_mock.assert_called_once()
         thread_mock.return_value.start.assert_called_once()
+
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_stages_keep_canonical_order(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        with patch("incident_intelligence.api.app._JOBS", {}):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="temporal",
+                    mode="custom",
+                    stages=["evaluate_temporal", "generate_sequence"],
+                )
+            )
+
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_sequence", "evaluate_temporal"],
+        )
+        save_jobs_mock.assert_called_once()
+        thread_mock.return_value.start.assert_called_once()
+
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_continues_existing_staged_run(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        existing_run = PipelineRun(
+            job_id="job-123",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-123:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+        )
+
+        with patch("incident_intelligence.api.app._JOBS", {"job-123": existing_run}):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="snapshot",
+                    mode="custom",
+                    stages=["train_snapshot"],
+                    source_job_id="job-123",
+                )
+            )
+
+        self.assertEqual(response.job_id, "job-123")
+        self.assertEqual(response.status, "queued")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_snapshot", "train_snapshot"],
+        )
+        self.assertEqual(response.stages[1].stage_order, 1)
+        save_jobs_mock.assert_called_once()
+        thread_mock.return_value.start.assert_called_once()
+
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_without_source_job_id_continues_latest_staged_run(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        older_run = PipelineRun(
+            job_id="job-old",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-old:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+            created_at="2026-04-01T00:00:00+00:00",
+            finished_at="2026-04-01T00:05:00+00:00",
+        )
+        latest_run = PipelineRun(
+            job_id="job-latest",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-latest:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+            created_at="2026-04-01T01:00:00+00:00",
+            finished_at="2026-04-01T01:05:00+00:00",
+        )
+
+        with patch(
+            "incident_intelligence.api.app._JOBS",
+            {"job-old": older_run, "job-latest": latest_run},
+        ):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="snapshot",
+                    mode="custom",
+                    stages=["train_snapshot"],
+                )
+            )
+
+        self.assertEqual(response.job_id, "job-latest")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_snapshot", "train_snapshot"],
+        )
+
+    @patch("incident_intelligence.api.app.threading.Thread")
+    @patch("incident_intelligence.api.app._save_jobs")
+    def test_run_pipeline_custom_force_new_run_does_not_continue_latest_staged_run(
+        self, save_jobs_mock, thread_mock
+    ) -> None:
+        latest_run = PipelineRun(
+            job_id="job-latest",
+            dataset_kind="snapshot",
+            mode="custom",
+            requested_stages=["generate_snapshot"],
+            stages=[
+                PipelineStage(
+                    stage_id="job-latest:generate_snapshot",
+                    stage_name="generate_snapshot",
+                    stage_order=0,
+                    command=["python", "-m", "incident_intelligence.cli.generator"],
+                    log_path="/tmp/01_generate_snapshot.log",
+                    status="completed",
+                )
+            ],
+            status="completed",
+            created_at="2026-04-01T01:00:00+00:00",
+            finished_at="2026-04-01T01:05:00+00:00",
+        )
+
+        with patch(
+            "incident_intelligence.api.app._JOBS",
+            {"job-latest": latest_run},
+        ):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="snapshot",
+                    mode="custom",
+                    stages=["generate_snapshot"],
+                    force_new_run=True,
+                )
+            )
+
+        self.assertNotEqual(response.job_id, "job-latest")
+        self.assertEqual(response.mode, "custom")
+        self.assertEqual(
+            [stage.stage_name for stage in response.stages],
+            ["generate_snapshot"],
+        )
+        save_jobs_mock.assert_called_once()
+        thread_mock.return_value.start.assert_called_once()
+
+    def test_run_pipeline_job_skips_completed_stages_when_continuing_custom_run(self) -> None:
+        continued_run = PipelineRun(
+            job_id="job-continue",
+            dataset_kind="temporal",
+            mode="custom",
+            requested_stages=[
+                "generate_sequence",
+                "build_temporal_features",
+                "train_temporal",
+                "evaluate_temporal",
+            ],
+            stages=[
+                PipelineStage(
+                    stage_id="job-continue:generate_sequence",
+                    stage_name="generate_sequence",
+                    stage_order=0,
+                    command=["python", "-m", "stage.generate_sequence"],
+                    log_path="/tmp/01_generate_sequence.log",
+                    status="completed",
+                ),
+                PipelineStage(
+                    stage_id="job-continue:build_temporal_features",
+                    stage_name="build_temporal_features",
+                    stage_order=1,
+                    command=["python", "-m", "stage.build_temporal_features"],
+                    log_path="/tmp/02_build_temporal_features.log",
+                    status="completed",
+                ),
+                PipelineStage(
+                    stage_id="job-continue:train_temporal",
+                    stage_name="train_temporal",
+                    stage_order=2,
+                    command=["python", "-m", "stage.train_temporal"],
+                    log_path="/tmp/03_train_temporal.log",
+                    status="completed",
+                ),
+                PipelineStage(
+                    stage_id="job-continue:evaluate_temporal",
+                    stage_name="evaluate_temporal",
+                    stage_order=3,
+                    command=["python", "-m", "stage.evaluate_temporal"],
+                    log_path="/tmp/04_evaluate_temporal.log",
+                    status="queued",
+                ),
+            ],
+            status="queued",
+        )
+
+        popen_calls: list[list[str]] = []
+
+        class FakeProcess:
+            def __init__(self, command, **_kwargs):
+                popen_calls.append(command)
+
+            def wait(self):
+                return 0
+
+        with (
+            patch("incident_intelligence.api.app._JOBS", {"job-continue": continued_run}),
+            patch("incident_intelligence.api.app._save_jobs"),
+            patch("incident_intelligence.api.app.subprocess.Popen", side_effect=FakeProcess),
+        ):
+            _run_pipeline_job("job-continue")
+
+        self.assertEqual(
+            popen_calls,
+            [["python", "-m", "stage.evaluate_temporal"]],
+        )
+        self.assertEqual(
+            [stage.status for stage in continued_run.stages],
+            ["completed", "completed", "completed", "completed"],
+        )
 
     def test_get_project_file_rejects_outside_allowed_roots(self) -> None:
         with self.assertRaises(HTTPException) as exc_info:
@@ -127,52 +392,207 @@ class DashboardApiTests(unittest.TestCase):
 
         self.assertEqual(exc_info.exception.status_code, 404)
 
-    def test_existing_job_log_is_returned(self) -> None:
+    def test_existing_job_log_is_combined_and_returned(self) -> None:
         with TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "job.log"
-            log_path.write_text("pipeline finished", encoding="utf-8")
+            log_path = Path(temp_dir) / "01_train_snapshot.log"
+            log_path.write_text("train finished", encoding="utf-8")
+            run = PipelineRun(
+                job_id="job-123",
+                dataset_kind="snapshot",
+                mode="full",
+                requested_stages=["train_snapshot"],
+                stages=[
+                    PipelineStage(
+                        stage_id="job-123:train_snapshot",
+                        stage_name="train_snapshot",
+                        stage_order=0,
+                        command=["python", "-m", "incident_intelligence.cli.train"],
+                        log_path=str(log_path),
+                        status="completed",
+                    )
+                ],
+            )
 
-            with patch(
-                "incident_intelligence.api.app._JOBS",
-                {"job-123": type("Job", (), {"log_path": str(log_path)})()},
-            ):
+            with patch("incident_intelligence.api.app._JOBS", {"job-123": run}):
                 response = get_pipeline_job_log("job-123")
 
-        self.assertEqual(response["log"], "pipeline finished")
+        self.assertIn("train finished", response["log"])
+        self.assertEqual(response["stages"][0]["stage_name"], "train_snapshot")
 
-    def test_delete_pipeline_job_removes_job_and_log(self) -> None:
+    def test_delete_pipeline_job_removes_run_directory_and_logs(self) -> None:
         with TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "job.log"
+            log_dir = Path(temp_dir) / "job-123"
+            log_dir.mkdir()
+            log_path = log_dir / "01_train_snapshot.log"
             log_path.write_text("pipeline finished", encoding="utf-8")
+            data_root = Path(temp_dir) / "data" / "runs" / "job-123" / "processed"
+            data_root.mkdir(parents=True)
+            train_csv = data_root / "incident_snapshot_train.csv"
+            train_csv.write_text("label\nnormal\n", encoding="utf-8")
             jobs = {
-                "job-123": PipelineJob(
+                "job-123": PipelineRun(
                     job_id="job-123",
                     dataset_kind="snapshot",
-                    command=["python", "-m", "incident_intelligence.cli.pipeline"],
-                    log_path=str(log_path),
+                    mode="full",
+                    requested_stages=["train_snapshot"],
+                    stages=[
+                        PipelineStage(
+                            stage_id="job-123:train_snapshot",
+                            stage_name="train_snapshot",
+                            stage_order=0,
+                            command=["python", "-m", "incident_intelligence.cli.train"],
+                            log_path=str(log_path),
+                            status="completed",
+                        )
+                    ],
                     status="completed",
                 )
             }
 
             with patch("incident_intelligence.api.app._JOBS", jobs), patch(
                 "incident_intelligence.api.app._save_jobs"
-            ) as save_jobs_mock:
+            ) as save_jobs_mock, patch(
+                "incident_intelligence.api.app.API_RUNS_DIR", Path(temp_dir)
+            ), patch(
+                "incident_intelligence.api.app.PROJECT_ROOT", Path(temp_dir)
+            ):
                 response = delete_pipeline_job("job-123")
 
         self.assertEqual(response.job_id, "job-123")
-        self.assertFalse(log_path.exists())
+        self.assertFalse(log_dir.exists())
+        self.assertFalse(train_csv.exists())
         self.assertEqual(jobs, {})
         save_jobs_mock.assert_called_once()
 
-    def test_jobs_are_persisted_to_sqlite(self) -> None:
+    def test_build_stages_uses_run_scoped_dataset_paths(self) -> None:
+        request = PipelineRunRequest(
+            dataset_kind="snapshot",
+            mode="full",
+            models=["logistic", "rf"],
+        )
+
+        stages = _build_stages("job-123", request)
+        generate_command = stages[0].command
+        train_command = stages[1].command
+        evaluate_command = stages[2].command
+        explain_command = stages[3].command
+
+        self.assertIn("--raw-out", generate_command)
+        self.assertTrue(
+            any("data/runs/job-123/raw/incidents_raw.csv" in arg for arg in generate_command)
+        )
+        self.assertIn("--processed-dir", generate_command)
+        self.assertTrue(any("data/runs/job-123/processed" in arg for arg in generate_command))
+
+        self.assertIn("--train", train_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_train.csv" in arg for arg in train_command)
+        )
+        self.assertIn("--val", train_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_val.csv" in arg for arg in train_command)
+        )
+
+        self.assertIn("--data", evaluate_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_eval.csv" in arg for arg in evaluate_command)
+        )
+        self.assertIn("--data", explain_command)
+        self.assertTrue(
+            any("data/runs/job-123/processed/incident_snapshot_eval.csv" in arg for arg in explain_command)
+        )
+
+    def test_cancel_pipeline_job_marks_queued_run_cancelled(self) -> None:
+        jobs = {
+            "job-123": PipelineRun(
+                job_id="job-123",
+                dataset_kind="snapshot",
+                mode="full",
+                requested_stages=["generate_snapshot", "train_snapshot"],
+                stages=[
+                    PipelineStage(
+                        stage_id="job-123:generate_snapshot",
+                        stage_name="generate_snapshot",
+                        stage_order=0,
+                        command=["python", "-m", "incident_intelligence.cli.generator"],
+                        log_path="/tmp/01_generate_snapshot.log",
+                        status="queued",
+                    ),
+                    PipelineStage(
+                        stage_id="job-123:train_snapshot",
+                        stage_name="train_snapshot",
+                        stage_order=1,
+                        command=["python", "-m", "incident_intelligence.cli.train"],
+                        log_path="/tmp/02_train_snapshot.log",
+                        status="queued",
+                    ),
+                ],
+                status="queued",
+            )
+        }
+
+        with patch("incident_intelligence.api.app._JOBS", jobs), patch(
+            "incident_intelligence.api.app._save_jobs"
+        ) as save_jobs_mock:
+            response = cancel_pipeline_job("job-123")
+
+        self.assertEqual(response.status, "cancelled")
+        self.assertTrue(all(stage.status == "skipped" for stage in jobs["job-123"].stages))
+        save_jobs_mock.assert_called_once()
+
+    def test_cancel_pipeline_job_marks_running_run_cancelling(self) -> None:
+        jobs = {
+            "job-123": PipelineRun(
+                job_id="job-123",
+                dataset_kind="snapshot",
+                mode="full",
+                requested_stages=["train_snapshot"],
+                stages=[
+                    PipelineStage(
+                        stage_id="job-123:train_snapshot",
+                        stage_name="train_snapshot",
+                        stage_order=0,
+                        command=["python", "-m", "incident_intelligence.cli.train"],
+                        log_path="/tmp/01_train_snapshot.log",
+                        status="running",
+                    )
+                ],
+                status="running",
+                current_stage_name="train_snapshot",
+            )
+        }
+        process_mock = unittest.mock.Mock()
+
+        with patch("incident_intelligence.api.app._JOBS", jobs), patch(
+            "incident_intelligence.api.app._save_jobs"
+        ) as save_jobs_mock, patch(
+            "incident_intelligence.api.app._RUN_PROCESSES", {"job-123": process_mock}
+        ):
+            response = cancel_pipeline_job("job-123")
+
+        self.assertEqual(response.status, "cancelling")
+        process_mock.terminate.assert_called_once()
+        save_jobs_mock.assert_called_once()
+
+    def test_runs_are_persisted_to_sqlite(self) -> None:
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "jobs.sqlite3"
             jobs = {
-                "job-123": PipelineJob(
+                "job-123": PipelineRun(
                     job_id="job-123",
                     dataset_kind="snapshot",
-                    command=["python", "-m", "incident_intelligence.cli.pipeline"],
-                    log_path=str(Path(temp_dir) / "job-123.log"),
+                    mode="full",
+                    requested_stages=["train_snapshot"],
+                    stages=[
+                        PipelineStage(
+                            stage_id="job-123:train_snapshot",
+                            stage_name="train_snapshot",
+                            stage_order=0,
+                            command=["python", "-m", "incident_intelligence.cli.train"],
+                            log_path=str(Path(temp_dir) / "job-123" / "01_train_snapshot.log"),
+                            status="completed",
+                        )
+                    ],
                     status="completed",
                 )
             }
@@ -185,6 +605,10 @@ class DashboardApiTests(unittest.TestCase):
                 self.assertTrue(db_path.exists())
                 self.assertIn("job-123", loaded_jobs)
                 self.assertEqual(loaded_jobs["job-123"].status, "completed")
+                self.assertEqual(
+                    loaded_jobs["job-123"].stages[0].stage_name,
+                    "train_snapshot",
+                )
 
 
 if __name__ == "__main__":

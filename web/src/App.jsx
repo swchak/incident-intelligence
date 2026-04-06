@@ -2,6 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 const DATASET_KINDS = ["snapshot", "temporal"];
+const STAGE_OPTIONS = {
+  snapshot: [
+    "generate_snapshot",
+    "train_snapshot",
+    "evaluate_snapshot",
+    "explain_snapshot",
+  ],
+  temporal: [
+    "generate_sequence",
+    "build_temporal_features",
+    "train_temporal",
+    "evaluate_temporal",
+    "explain_temporal",
+  ],
+};
 
 async function fetchJson(path, options) {
   const response = await fetch(`${API_BASE_URL}${path}`, options);
@@ -10,6 +25,14 @@ async function fetchJson(path, options) {
     throw new Error(body || `Request failed: ${response.status}`);
   }
   return response.json();
+}
+
+function withOptionalJob(path, jobId) {
+  if (!jobId) {
+    return path;
+  }
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}job_id=${encodeURIComponent(jobId)}`;
 }
 
 function formatScore(value) {
@@ -21,8 +44,169 @@ function fileUrl(path, version = "") {
   return `${API_BASE_URL}/api/files/${path}${suffix}`;
 }
 
+function humanizeStageName(stageName) {
+  return stageName.replace(/_/g, " ");
+}
+
+function shortRunId(jobId) {
+  return jobId.slice(0, 8);
+}
+
+function formatJobTime(timestamp) {
+  if (!timestamp) {
+    return "";
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+function lastStageLabel(job) {
+  const stages = Array.isArray(job.stages) ? job.stages : [];
+  if (job.current_stage_name) {
+    return humanizeStageName(job.current_stage_name);
+  }
+  if (stages.length) {
+    const ordered = [...stages].sort((left, right) => left.stage_order - right.stage_order);
+    return humanizeStageName(ordered[ordered.length - 1].stage_name);
+  }
+  return "No stages yet";
+}
+
 function isVisualArtifact(path) {
   return /\.(png|jpg|jpeg|svg|webp)$/i.test(path);
+}
+
+function completedStageNamesForJobs(jobs, datasetKind, selectedJob) {
+  if (selectedJob && selectedJob.dataset_kind === datasetKind) {
+    return new Set(
+      (Array.isArray(selectedJob.stages) ? selectedJob.stages : [])
+        .filter((stage) => stage.status === "completed")
+        .map((stage) => stage.stage_name),
+    );
+  }
+  return new Set(
+    jobs
+      .filter((job) => job.dataset_kind === datasetKind)
+      .flatMap((job) =>
+        (Array.isArray(job.stages) ? job.stages : [])
+          .filter((stage) => stage.status === "completed")
+          .map((stage) => stage.stage_name),
+      ),
+  );
+}
+
+function stageReadiness(stageName, datasetKind, completedStages, summary, artifactEntries) {
+  const hasModels = (artifactEntries.models_dir || []).length > 0 || Boolean(summary?.artifacts?.best_model);
+  const hasEvalMetrics = Boolean(summary?.evaluation_metrics?.models?.length);
+  const hasExplainArtifacts = (artifactEntries.explain_dir || []).length > 0;
+
+  const prerequisites = {
+    snapshot: {
+      generate_snapshot: [],
+      train_snapshot: ["generate_snapshot"],
+      evaluate_snapshot: ["train_snapshot"],
+      explain_snapshot: ["evaluate_snapshot"],
+    },
+    temporal: {
+      generate_sequence: [],
+      build_temporal_features: ["generate_sequence"],
+      train_temporal: ["build_temporal_features"],
+      evaluate_temporal: ["train_temporal"],
+      explain_temporal: ["evaluate_temporal"],
+    },
+  };
+
+  const missingPrereqs = (prerequisites[datasetKind][stageName] || []).filter(
+    (prereq) => !completedStages.has(prereq),
+  );
+
+  if (!missingPrereqs.length) {
+    return { enabled: true, reason: "" };
+  }
+
+  if (
+    stageName.startsWith("evaluate_") &&
+    hasModels
+  ) {
+    return { enabled: true, reason: "" };
+  }
+
+  if (
+    stageName.startsWith("explain_") &&
+    (hasEvalMetrics || hasExplainArtifacts || hasModels)
+  ) {
+    return { enabled: true, reason: "" };
+  }
+
+  return {
+    enabled: false,
+    reason: `Requires ${missingPrereqs.join(" -> ")} first`,
+  };
+}
+
+function customStageReadiness(stageName, datasetKind, completedStages) {
+  const orderedStages = STAGE_OPTIONS[datasetKind];
+  const nextStage = orderedStages.find((item) => !completedStages.has(item)) || null;
+
+  if (completedStages.has(stageName)) {
+    return {
+      enabled: false,
+      reason: "Already completed in this staged run",
+    };
+  }
+
+  if (stageName === nextStage) {
+    return { enabled: true, reason: "" };
+  }
+
+  return {
+    enabled: false,
+    reason: nextStage ? `Run ${nextStage} first` : "No remaining stages to run",
+  };
+}
+
+function lockedCustomStageReadiness(stageName, completedStages, nextStage, status) {
+  if (completedStages.has(stageName)) {
+    return {
+      enabled: false,
+      reason: "Already completed in this staged run",
+    };
+  }
+
+  if (stageName === nextStage) {
+    return {
+      enabled: false,
+      reason:
+        status === "queued"
+          ? "Current staged run is queued"
+          : "Wait for the current stage to finish",
+    };
+  }
+
+  return {
+    enabled: false,
+    reason: nextStage ? `Run ${nextStage} first` : "No remaining stages to run",
+  };
+}
+
+function nextStageAfterCurrent(datasetKind, currentStageName) {
+  if (!currentStageName) {
+    return null;
+  }
+  const orderedStages = STAGE_OPTIONS[datasetKind];
+  const currentIndex = orderedStages.indexOf(currentStageName);
+  if (currentIndex === -1) {
+    return null;
+  }
+  return orderedStages[currentIndex + 1] || null;
 }
 
 function StatCard({ title, value, subtitle }) {
@@ -127,57 +311,166 @@ function MetricTable({ rows }) {
   );
 }
 
-function JobList({ jobs, onSelect, onDelete, selectedJobId, deletingJobId }) {
+function JobList({
+  jobs,
+  onSelect,
+  onDelete,
+  onCancel,
+  selectedJobId,
+  currentMode,
+  deletingJobId,
+  cancellingJobId,
+}) {
   if (!jobs.length) {
     return <div className="muted">No pipeline jobs started yet.</div>;
   }
 
+  const groupedJobs = [
+    {
+      key: "custom",
+      title: "Custom Pipeline Runs",
+      items: jobs.filter((job) => job.mode === "custom"),
+    },
+    {
+      key: "full",
+      title: "Full Pipeline Runs",
+      items: jobs.filter((job) => job.mode !== "custom"),
+    },
+  ]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((left, right) => {
+        if (left.job_id === selectedJobId && right.job_id !== selectedJobId) {
+          return -1;
+        }
+        if (right.job_id === selectedJobId && left.job_id !== selectedJobId) {
+          return 1;
+        }
+        return 0;
+      }),
+    }))
+    .filter((group) => group.items.length)
+    .sort((left, right) => {
+      const activeGroupKey = currentMode === "custom" ? "custom" : "full";
+      if (left.key === activeGroupKey && right.key !== activeGroupKey) {
+        return -1;
+      }
+      if (right.key === activeGroupKey && left.key !== activeGroupKey) {
+        return 1;
+      }
+      return 0;
+    });
+
   return (
     <div className="job-list">
-      <div className="job-list-header">
-        <div className="job-list-header-main">
-          <span>Status</span>
-          <span>Kind</span>
-          <span>Time</span>
-        </div>
-        <span>Action</span>
-      </div>
-      {jobs.map((job) => (
-        <div
-          key={job.job_id}
-          className={`job-item ${
-            selectedJobId === job.job_id ? "selected" : ""
-          }`}
-        >
-          <button
-            className="job-select"
-            onClick={() => onSelect(job)}
-            type="button"
-          >
-            <span className={`status-chip ${job.status}`}>{job.status}</span>
-            <span className="job-kind">{job.dataset_kind}</span>
-            <span className="job-meta">
-              {job.finished_at ? `finished ${job.finished_at}` : job.created_at}
-            </span>
-          </button>
-          <button
-            className="job-delete"
-            type="button"
-            onClick={() => onDelete(job.job_id)}
-            disabled={
-              deletingJobId === job.job_id ||
-              job.status === "queued" ||
-              job.status === "running"
-            }
-            aria-label={`Delete job ${job.job_id}`}
-            title={
-              job.status === "queued" || job.status === "running"
-                ? "Cannot delete a job while it is queued or running"
-                : "Delete job"
-            }
-          >
-            {deletingJobId === job.job_id ? "Deleting..." : "Delete Run"}
-          </button>
+      {groupedJobs.map((group) => (
+        <div className="job-group" key={group.key}>
+          <div className="job-group-title">{group.title}</div>
+          <div className="job-list-header">
+            <div className="job-list-header-main">
+              <span>Status</span>
+              <span>Kind</span>
+              <span>Run ID</span>
+              <span>Last Stage</span>
+            </div>
+            <span>Action</span>
+          </div>
+          {group.items.map((job) => (
+            (() => {
+              const stages = Array.isArray(job.stages) ? job.stages : [];
+              const completedStageCount = stages.filter(
+                (stage) => stage.status === "completed",
+              ).length;
+              const isExpanded = selectedJobId === job.job_id;
+              return (
+                <div
+                  key={job.job_id}
+                  className={`job-item ${
+                    isExpanded ? "selected" : ""
+                  }`}
+                >
+                  <button
+                    className="job-select"
+                    onClick={() => onSelect(job)}
+                    type="button"
+                    aria-expanded={isExpanded}
+                  >
+                    <div className="job-primary-row">
+                      <span className={`status-chip ${job.status}`}>{job.status}</span>
+                      <span className="job-kind">{job.dataset_kind}</span>
+                      <span className="job-run-id">{shortRunId(job.job_id)}</span>
+                      <span className="job-last-stage">
+                        <span>{lastStageLabel(job)}</span>
+                        <span className="job-toggle-indicator" aria-hidden="true">
+                          {isExpanded ? "Collapse ▴" : "Details ▾"}
+                        </span>
+                      </span>
+                    </div>
+                  </button>
+                  {job.status === "queued" || job.status === "running" || job.status === "cancelling" ? (
+                    <button
+                      className="job-cancel"
+                      type="button"
+                      onClick={() => onCancel(job.job_id)}
+                      disabled={cancellingJobId === job.job_id || job.status === "cancelling"}
+                      aria-label={`Cancel job ${job.job_id}`}
+                      title="Cancel job"
+                    >
+                      {cancellingJobId === job.job_id || job.status === "cancelling"
+                        ? "Cancelling..."
+                        : "Cancel Run"}
+                    </button>
+                  ) : (
+                    <button
+                      className="job-delete"
+                      type="button"
+                      onClick={() => onDelete(job.job_id)}
+                      disabled={deletingJobId === job.job_id}
+                      aria-label={`Delete job ${job.job_id}`}
+                      title="Delete job"
+                    >
+                      {deletingJobId === job.job_id ? "Deleting..." : "Delete Run"}
+                    </button>
+                  )}
+                  {isExpanded ? (
+                    <div className="job-details">
+                      <div className="job-secondary-row">
+                        <span className="job-stage-summary">
+                          {completedStageCount}/{stages.length} stages
+                        </span>
+                      </div>
+                      <div className="job-stage-list" role="list" aria-label={`Stages for ${job.job_id}`}>
+                        {stages.length ? (
+                          stages.map((stage) => (
+                            <div
+                              key={stage.stage_id}
+                              className="job-stage-row"
+                              role="listitem"
+                            >
+                              <span className="job-stage-name">
+                                {humanizeStageName(stage.stage_name)}
+                              </span>
+                              <span
+                                className={`job-stage-indicator ${
+                                  stage.status === "completed" ? "done" : "not-done"
+                                }`}
+                                title={stage.status}
+                                aria-hidden="true"
+                              >
+                                {stage.status === "completed" ? "✓" : "✕"}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="muted">No stages recorded yet.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()
+          ))}
         </div>
       ))}
     </div>
@@ -224,14 +517,20 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedJobLog, setSelectedJobLog] = useState("");
+  const [forceNewCustomRun, setForceNewCustomRun] = useState(false);
+  const [activeCustomRunByDataset, setActiveCustomRunByDataset] = useState({});
   const [deletingJobId, setDeletingJobId] = useState(null);
+  const [cancellingJobId, setCancellingJobId] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingArtifacts, setLoadingArtifacts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [assetVersion, setAssetVersion] = useState("");
   const lastCompletedJobRef = useRef("");
+  const previousModeRef = useRef("full");
   const [runForm, setRunForm] = useState({
+    mode: "full",
+    stages: STAGE_OPTIONS.snapshot,
     fast_mode: false,
     models: "logistic,rf",
     cv: datasetKind === "temporal" ? "3" : "",
@@ -241,7 +540,16 @@ export default function App() {
   });
 
   useEffect(() => {
-    refreshDashboard(datasetKind);
+    refreshDashboard(datasetKind, selectedJob?.dataset_kind === datasetKind ? selectedJob.job_id : null);
+  }, [datasetKind, selectedJobId, jobs]);
+
+  useEffect(() => {
+    setRunForm((current) => ({
+      ...current,
+      stages: STAGE_OPTIONS[datasetKind],
+      cv: datasetKind === "temporal" && !current.cv ? "3" : current.cv,
+    }));
+    setForceNewCustomRun(false);
   }, [datasetKind]);
 
   useEffect(() => {
@@ -249,12 +557,6 @@ export default function App() {
     const timer = window.setInterval(refreshJobs, 3000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!selectedJobId && jobs.length) {
-      setSelectedJobId(jobs[0].job_id);
-    }
-  }, [jobs, selectedJobId]);
 
   useEffect(() => {
     if (!selectedJobId) {
@@ -282,14 +584,14 @@ export default function App() {
     }
   }, [jobs, datasetKind]);
 
-  async function refreshDashboard(kind) {
+  async function refreshDashboard(kind, jobId = null) {
     setError("");
     setLoadingSummary(true);
     setLoadingArtifacts(true);
     try {
       const [summaryData, artifactData] = await Promise.all([
-        fetchJson(`/api/dashboard/summary/${kind}`),
-        fetchJson(`/api/artifacts/${kind}`),
+        fetchJson(withOptionalJob(`/api/dashboard/summary/${kind}`, jobId)),
+        fetchJson(withOptionalJob(`/api/artifacts/${kind}`, jobId)),
       ]);
       setSummary(summaryData);
       setArtifacts(artifactData);
@@ -324,13 +626,22 @@ export default function App() {
     setError("");
     setDeletingJobId(jobId);
     try {
+      const deletedJob = jobs.find((job) => job.job_id === jobId) || null;
       await fetchJson(`/api/pipeline/jobs/${jobId}`, { method: "DELETE" });
-      const nextJobs = jobs.filter((job) => job.job_id !== jobId);
       if (selectedJobId === jobId) {
-        setSelectedJobId(nextJobs[0]?.job_id ?? null);
-        if (!nextJobs.length) {
-          setSelectedJobLog("");
-        }
+        setSelectedJobId(null);
+        setSelectedJobLog("");
+      }
+      if (deletedJob?.mode === "custom") {
+        setActiveCustomRunByDataset((current) => {
+          if (current[deletedJob.dataset_kind] !== jobId) {
+            return current;
+          }
+          return {
+            ...current,
+            [deletedJob.dataset_kind]: null,
+          };
+        });
       }
       await refreshJobs();
     } catch (err) {
@@ -340,26 +651,82 @@ export default function App() {
     }
   }
 
+  async function cancelJob(jobId) {
+    setError("");
+    setCancellingJobId(jobId);
+    try {
+      await fetchJson(`/api/pipeline/jobs/${jobId}/cancel`, { method: "POST" });
+      await refreshJobs();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCancellingJobId(null);
+    }
+  }
+
+  function selectDatasetKind(kind) {
+    setForceNewCustomRun(false);
+    const rememberedCustomRunId =
+      runForm.mode === "custom" ? activeCustomRunByDataset[kind] || null : null;
+    setSelectedJobId(rememberedCustomRunId);
+    setSelectedJobLog("");
+    setDatasetKind(kind);
+  }
+
   function selectJob(job) {
+    if (selectedJobId === job.job_id) {
+      setForceNewCustomRun(false);
+      setSelectedJobId(null);
+      setSelectedJobLog("");
+      refreshDashboard(datasetKind);
+      return;
+    }
+    setForceNewCustomRun(false);
+    if (job.mode === "custom") {
+      setActiveCustomRunByDataset((current) => ({
+        ...current,
+        [job.dataset_kind]: job.job_id,
+      }));
+    }
+    setRunForm((current) => ({
+      ...current,
+      mode: job.mode === "custom" ? "custom" : "full",
+      stages:
+        job.mode === "full"
+          ? STAGE_OPTIONS[job.dataset_kind]
+          : current.stages,
+      cv:
+        job.dataset_kind === "temporal" && !current.cv ? "3" : current.cv,
+    }));
     setSelectedJobId(job.job_id);
     setSelectedJobLog("");
     loadJobLog(job.job_id);
-    if (job.dataset_kind !== datasetKind) {
-      setDatasetKind(job.dataset_kind);
-      return;
-    }
-    if (job.status === "completed" || job.status === "failed") {
-      refreshDashboard(job.dataset_kind);
-    }
+    setDatasetKind(job.dataset_kind);
+    refreshDashboard(job.dataset_kind, job.job_id);
   }
 
   async function submitRun(event) {
     event.preventDefault();
+    await startRun();
+  }
+
+  async function startRun(stageOverride = null, modeOverride = null) {
     setSubmitting(true);
     setError("");
     try {
+      const nextMode = modeOverride || runForm.mode;
+      const nextStages = stageOverride || (nextMode === "custom" ? runForm.stages : null);
       const payload = {
         dataset_kind: datasetKind,
+        mode: nextMode,
+        stages: nextMode === "custom" ? nextStages : null,
+        source_job_id:
+          nextMode === "custom" &&
+          sourceJob?.dataset_kind === datasetKind &&
+          sourceJob?.status === "completed"
+            ? sourceJob.job_id
+            : null,
+        force_new_run: nextMode === "custom" && forceNewCustomRun,
         fast_mode: runForm.fast_mode,
         models: runForm.models
           ? runForm.models
@@ -377,6 +744,13 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (nextMode === "custom") {
+        setActiveCustomRunByDataset((current) => ({
+          ...current,
+          [datasetKind]: job.job_id,
+        }));
+        setForceNewCustomRun(false);
+      }
       setSelectedJobId(job.job_id);
       await refreshJobs();
     } catch (err) {
@@ -449,6 +823,270 @@ export default function App() {
   ];
 
   const visibleJobs = useMemo(() => jobs, [jobs]);
+  const selectedJob = useMemo(
+    () => jobs.find((job) => job.job_id === selectedJobId) || null,
+    [jobs, selectedJobId],
+  );
+  const selectedCustomRun = useMemo(() => {
+    if (runForm.mode !== "custom") {
+      return null;
+    }
+    if (forceNewCustomRun) {
+      return null;
+    }
+    if (
+      selectedJob &&
+      selectedJob.dataset_kind === datasetKind &&
+      selectedJob.mode === "custom"
+    ) {
+      return selectedJob;
+    }
+    const rememberedJobId = activeCustomRunByDataset[datasetKind];
+    if (!rememberedJobId) {
+      return null;
+    }
+    const rememberedJob =
+      jobs.find(
+        (job) =>
+          job.job_id === rememberedJobId &&
+          job.dataset_kind === datasetKind &&
+          job.mode === "custom",
+      ) || null;
+    if (!rememberedJob) {
+      return null;
+    }
+    const rememberedCompletedStages = completedStageNamesForJobs(
+      jobs,
+      datasetKind,
+      rememberedJob,
+    );
+    const rememberedRunComplete =
+      rememberedCompletedStages.size === STAGE_OPTIONS[datasetKind].length;
+    if (
+      rememberedRunComplete &&
+      !["queued", "running", "cancelling"].includes(rememberedJob.status)
+    ) {
+      return null;
+    }
+    return rememberedJob;
+  }, [
+    activeCustomRunByDataset,
+    datasetKind,
+    forceNewCustomRun,
+    jobs,
+    runForm.mode,
+    selectedJob,
+  ]);
+  const customRunLocked = Boolean(
+    selectedCustomRun &&
+      ["queued", "running", "cancelling"].includes(selectedCustomRun.status),
+  );
+  const sourceJob =
+    selectedCustomRun &&
+    ["completed", "failed", "cancelled"].includes(selectedCustomRun.status)
+      ? selectedCustomRun
+      : null;
+  const completedStages = useMemo(() => {
+    if (runForm.mode === "custom" && !selectedCustomRun) {
+      return new Set();
+    }
+    return completedStageNamesForJobs(jobs, datasetKind, selectedCustomRun);
+  }, [jobs, datasetKind, runForm.mode, selectedCustomRun]);
+  const nextIncompleteStage = useMemo(
+    () =>
+      STAGE_OPTIONS[datasetKind].find((stageName) => !completedStages.has(stageName)) ||
+      null,
+    [completedStages, datasetKind],
+  );
+  const lockedPreviewStage = useMemo(() => {
+    if (!customRunLocked || !selectedCustomRun) {
+      return nextIncompleteStage;
+    }
+    if (selectedCustomRun.status === "queued") {
+      return selectedCustomRun.current_stage_name || nextIncompleteStage;
+    }
+    return (
+      nextStageAfterCurrent(datasetKind, selectedCustomRun.current_stage_name) ||
+      nextIncompleteStage
+    );
+  }, [customRunLocked, datasetKind, nextIncompleteStage, selectedCustomRun]);
+  const stageAvailability = useMemo(
+    () =>
+      Object.fromEntries(
+        STAGE_OPTIONS[datasetKind].map((stageName) => [
+          stageName,
+          runForm.mode === "custom"
+            ? customRunLocked
+              ? lockedCustomStageReadiness(
+                  stageName,
+                  completedStages,
+                  lockedPreviewStage,
+                  selectedCustomRun?.status ?? "running",
+                )
+              : customStageReadiness(stageName, datasetKind, completedStages)
+            : stageReadiness(
+                stageName,
+                datasetKind,
+                completedStages,
+                summary,
+                artifactEntries,
+              ),
+        ]),
+      ),
+    [
+      artifactEntries,
+      completedStages,
+      customRunLocked,
+      datasetKind,
+      lockedPreviewStage,
+      runForm.mode,
+      selectedCustomRun?.status,
+      summary,
+    ],
+  );
+  const lastSuccessfulStage = useMemo(() => {
+    const ordered = STAGE_OPTIONS[datasetKind];
+    const completedOrdered = ordered.filter((stageName) =>
+      completedStages.has(stageName),
+    );
+    return completedOrdered.at(-1) || null;
+  }, [completedStages, datasetKind]);
+  const nextRunnableStage = useMemo(
+    () => (customRunLocked ? lockedPreviewStage : STAGE_OPTIONS[datasetKind].find(
+      (stageName) =>
+        !completedStages.has(stageName) && stageAvailability[stageName]?.enabled,
+    ) || null),
+    [completedStages, customRunLocked, datasetKind, lockedPreviewStage, stageAvailability],
+  );
+  const customRunComplete =
+    runForm.mode === "custom" &&
+    Boolean(selectedCustomRun) &&
+    completedStages.size === STAGE_OPTIONS[datasetKind].length;
+  const canStartNewCustomRun =
+    runForm.mode === "custom" &&
+    !forceNewCustomRun &&
+    Boolean(selectedCustomRun);
+  const selectedStageSummary = useMemo(() => {
+    if (runForm.mode === "full") {
+      return {
+        primary: `All ${datasetKind} stages will run in order.`,
+        secondary: null,
+      };
+    }
+    if (customRunComplete && selectedCustomRun) {
+      return {
+        primary: `Staged run ${shortRunId(selectedCustomRun.job_id)} is complete.`,
+        secondary: "There are no remaining stages to run.",
+      };
+    }
+    if (customRunLocked && selectedCustomRun) {
+      return {
+        primary: `Staged run ${shortRunId(selectedCustomRun.job_id)} is ${selectedCustomRun.status}.`,
+        secondary:
+          selectedCustomRun.current_stage_name
+            ? `Wait for ${selectedCustomRun.current_stage_name} to finish before continuing, or start a new staged run.`
+            : "Wait for the active stage to finish before continuing, or start a new staged run.",
+      };
+    }
+    if (!runForm.stages.length) {
+      return {
+        primary: "Select at least one stage to run.",
+        secondary: null,
+      };
+    }
+    if (sourceJob) {
+      return {
+        primary: `Continuing staged run ${shortRunId(sourceJob.job_id)} with: ${runForm.stages.join(", ")}`,
+        secondary: null,
+      };
+    }
+    return {
+      primary: `Starting a staged run with: ${runForm.stages.join(", ")}`,
+      secondary: "Select a staged run below to continue it later.",
+    };
+  }, [
+    customRunComplete,
+    customRunLocked,
+    datasetKind,
+    runForm.mode,
+    runForm.stages,
+    selectedCustomRun,
+    sourceJob,
+  ]);
+
+  const trainStageName = datasetKind === "snapshot" ? "train_snapshot" : "train_temporal";
+  const tuningEnabled =
+    !customRunLocked &&
+    (runForm.mode === "full" || runForm.stages.includes(trainStageName));
+  const runButtonLabel = useMemo(() => {
+    if (submitting) {
+      return "Starting...";
+    }
+    if (runForm.mode === "full") {
+      return `Run full ${datasetKind} pipeline`;
+    }
+    if (runForm.stages.length === 1) {
+      return `Run ${humanizeStageName(runForm.stages[0])}`;
+    }
+    return `Run custom ${datasetKind} stages`;
+  }, [datasetKind, runForm.mode, runForm.stages, submitting]);
+
+  useEffect(() => {
+    const previousMode = previousModeRef.current;
+    previousModeRef.current = runForm.mode;
+    if (runForm.mode !== "custom") {
+      setForceNewCustomRun(false);
+    }
+    if (runForm.mode !== "custom" || previousMode === "custom") {
+      return;
+    }
+    setRunForm((current) => ({
+      ...current,
+      stages: nextRunnableStage ? [nextRunnableStage] : [],
+    }));
+  }, [nextRunnableStage, runForm.mode]);
+
+  useEffect(() => {
+    if (runForm.mode !== "custom") {
+      return;
+    }
+    setRunForm((current) => {
+      const filteredStages = customRunLocked
+        ? current.stages.filter((stageName) => stageName === lockedPreviewStage)
+        : current.stages.filter((stageName) => stageAvailability[stageName]?.enabled);
+      if (filteredStages.length === current.stages.length) {
+        return current;
+      }
+      return {
+        ...current,
+        stages:
+          filteredStages.length > 0
+            ? filteredStages
+            : nextRunnableStage
+              ? [nextRunnableStage]
+              : [],
+      };
+    });
+  }, [customRunLocked, lockedPreviewStage, nextRunnableStage, runForm.mode, stageAvailability]);
+
+  useEffect(() => {
+    if (runForm.mode !== "custom" || !forceNewCustomRun) {
+      return;
+    }
+    setRunForm((current) => {
+      const nextStages = nextRunnableStage ? [nextRunnableStage] : [];
+      const sameStages =
+        current.stages.length === nextStages.length &&
+        current.stages.every((stage, index) => stage === nextStages[index]);
+      if (sameStages) {
+        return current;
+      }
+      return {
+        ...current,
+        stages: nextStages,
+      };
+    });
+  }, [forceNewCustomRun, nextRunnableStage, runForm.mode]);
 
   return (
     <div className="app-shell">
@@ -510,7 +1148,7 @@ export default function App() {
                   key={kind}
                   type="button"
                   className={datasetKind === kind ? "active" : ""}
-                  onClick={() => setDatasetKind(kind)}
+                  onClick={() => selectDatasetKind(kind)}
                 >
                   {kind}
                 </button>
@@ -520,122 +1158,275 @@ export default function App() {
         </div>
       </section>
 
-      <section className="grid two-up">
+      <section className="grid">
         <div className="card form-card">
           <div className="run-ppl-col">
-            <div className="section-kicker">Start Here</div>
             <div className="section-title">Run Pipeline</div>
             <form onSubmit={submitRun} className="run-form">
-              <label className="form-row">
-                <span className="form-label">Models</span>
-                <input
-                  value={runForm.models}
-                  onChange={(event) =>
-                    setRunForm((current) => ({
-                      ...current,
-                      models: event.target.value,
-                    }))
-                  }
-                  placeholder="logistic,rf"
-                />
-              </label>
-              <label className="form-row">
-                <span className="form-label">CV</span>
-                <input
-                  value={runForm.cv}
-                  onChange={(event) =>
-                    setRunForm((current) => ({
-                      ...current,
-                      cv: event.target.value,
-                    }))
-                  }
-                  placeholder="3"
-                />
-              </label>
-              <label className="form-row">
-                <span className="form-label">n_jobs</span>
-                <input
-                  value={runForm.n_jobs}
-                  onChange={(event) =>
-                    setRunForm((current) => ({
-                      ...current,
-                      n_jobs: event.target.value,
-                    }))
-                  }
-                  placeholder="1"
-                />
-              </label>
-              <label className="form-row">
-                <span className="form-label">Verbose</span>
-                <input
-                  value={runForm.verbose}
-                  onChange={(event) =>
-                    setRunForm((current) => ({
-                      ...current,
-                      verbose: event.target.value,
-                    }))
-                  }
-                  placeholder="0"
-                />
-              </label>
-              <label className="form-row">
-                <span className="form-label">Scoring</span>
-                <input
-                  value={runForm.scoring}
-                  onChange={(event) =>
-                    setRunForm((current) => ({
-                      ...current,
-                      scoring: event.target.value,
-                    }))
-                  }
-                  placeholder="f1_macro"
-                />
-              </label>
-              <label className="checkbox-row">
-                <span className="form-label">Fast mode</span>
-                <input
-                  type="checkbox"
-                  checked={runForm.fast_mode}
-                  onChange={(event) =>
-                    setRunForm((current) => ({
-                      ...current,
-                      fast_mode: event.target.checked,
-                    }))
-                  }
-                />
-              </label>
-              <button
-                className="primary-button"
-                type="submit"
-                disabled={submitting}
-              >
-                {submitting ? "Starting..." : `Run ${datasetKind} pipeline`}
-              </button>
+              <div className="tabbed-form-shell">
+                <div className="stage-mode-row">
+                  <span className="form-label">Mode</span>
+                  <div className="stage-mode-toggle">
+                    {["full", "custom"].map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={runForm.mode === mode ? "active" : ""}
+                        onClick={() =>
+                          setRunForm((current) => ({
+                            ...current,
+                            mode,
+                            stages:
+                              mode === "full"
+                                ? STAGE_OPTIONS[datasetKind]
+                                : current.stages,
+                          }))
+                        }
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="run-form-main">
+                  <div className="stage-picker">
+                    <span className="form-label">Stages</span>
+                    <div className="stage-options">
+                      {STAGE_OPTIONS[datasetKind].map((stageName) => {
+                        const checked =
+                          !customRunComplete &&
+                          (customRunLocked
+                            ? stageName === nextIncompleteStage
+                            : runForm.stages.includes(stageName));
+                        const availability = stageAvailability[stageName];
+                        return (
+                          <label
+                            key={stageName}
+                            className={`stage-option ${availability?.enabled ? "" : "disabled"}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={
+                                runForm.mode === "full" ||
+                                customRunComplete ||
+                                !availability?.enabled
+                              }
+                              onChange={(event) =>
+                                setRunForm((current) => {
+                                  const nextStages = event.target.checked
+                                    ? [...current.stages, stageName]
+                                    : current.stages.filter(
+                                        (item) => item !== stageName,
+                                      );
+                                  return {
+                                    ...current,
+                                    stages: STAGE_OPTIONS[datasetKind].filter((item) =>
+                                      nextStages.includes(item),
+                                    ),
+                                  };
+                                })
+                              }
+                            />
+                            <div className="stage-option-copy">
+                              <span className="stage-option-name">{stageName}</span>
+                              {!availability?.enabled ? (
+                                <span className="stage-option-hint">{availability.reason}</span>
+                              ) : null}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="stage-helper-copy">
+                      <span className="stage-helper-line stage-helper-line-primary">
+                        {selectedStageSummary.primary}
+                      </span>
+                      {selectedStageSummary.secondary ? (
+                        <span className="stage-helper-line stage-helper-line-secondary">
+                          * {selectedStageSummary.secondary}
+                        </span>
+                      ) : null}
+                    </div>
+                    {canStartNewCustomRun ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => {
+                          setSelectedJobId(null);
+                          setSelectedJobLog("");
+                          setActiveCustomRunByDataset((current) => ({
+                            ...current,
+                            [datasetKind]: null,
+                          }));
+                          setForceNewCustomRun(true);
+                        }}
+                      >
+                        Start new staged run
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="run-form-fields">
+                    <div className="tuning-inline-grid">
+                      <label className="compact-field compact-field-wide">
+                        <span className="form-label">Models</span>
+                        <input
+                          value={runForm.models}
+                          disabled={!tuningEnabled}
+                          onChange={(event) =>
+                            setRunForm((current) => ({
+                              ...current,
+                              models: event.target.value,
+                            }))
+                          }
+                          placeholder="logistic,rf"
+                        />
+                      </label>
+                      <label className="compact-field">
+                        <span className="form-label">CV</span>
+                        <input
+                          value={runForm.cv}
+                          disabled={!tuningEnabled}
+                          onChange={(event) =>
+                            setRunForm((current) => ({
+                              ...current,
+                              cv: event.target.value,
+                            }))
+                          }
+                          placeholder="3"
+                        />
+                      </label>
+                      <label className="compact-field">
+                        <span className="form-label">n_jobs</span>
+                        <input
+                          value={runForm.n_jobs}
+                          disabled={!tuningEnabled}
+                          onChange={(event) =>
+                            setRunForm((current) => ({
+                              ...current,
+                              n_jobs: event.target.value,
+                            }))
+                          }
+                          placeholder="1"
+                        />
+                      </label>
+                      <label className="compact-field">
+                        <span className="form-label">Verbose</span>
+                        <input
+                          value={runForm.verbose}
+                          disabled={!tuningEnabled}
+                          onChange={(event) =>
+                            setRunForm((current) => ({
+                              ...current,
+                              verbose: event.target.value,
+                            }))
+                          }
+                          placeholder="0"
+                        />
+                      </label>
+                      <label className="compact-field compact-field-wide">
+                        <span className="form-label">Scoring</span>
+                        <input
+                          value={runForm.scoring}
+                          disabled={!tuningEnabled}
+                          onChange={(event) =>
+                            setRunForm((current) => ({
+                              ...current,
+                              scoring: event.target.value,
+                            }))
+                          }
+                          placeholder="f1_macro"
+                        />
+                      </label>
+                      <label className="compact-field compact-checkbox-field">
+                        <span className="form-label">Fast mode</span>
+                        <input
+                          type="checkbox"
+                          checked={runForm.fast_mode}
+                          disabled={!tuningEnabled}
+                          onChange={(event) =>
+                            setRunForm((current) => ({
+                              ...current,
+                              fast_mode: event.target.checked,
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    {!tuningEnabled ? (
+                      <div className="stage-option-hint">
+                        Tuning parameters apply only when a train stage is selected.
+                      </div>
+                    ) : null}
+                    {!customRunComplete ? (
+                      <div className="tuning-actions">
+                        <button
+                          className="primary-button"
+                          type="submit"
+                          disabled={
+                            submitting ||
+                            customRunLocked ||
+                            (runForm.mode === "custom" && runForm.stages.length === 0)
+                          }
+                        >
+                          {runButtonLabel}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
             </form>
           </div>
-          <div className="form-subsection jobs-subsection">
-            <div className="section-title section-title-compact">
-              Recent Jobs
+          <div className="form-subsection run-activity-subsection">
+            <div className="run-activity-grid">
+              <div className="jobs-subsection">
+                <div className="section-title section-title-compact">
+                  Recent Jobs
+                </div>
+                <JobList
+                  jobs={visibleJobs}
+                  onSelect={selectJob}
+                  onDelete={deleteJob}
+                  onCancel={cancelJob}
+                  selectedJobId={selectedJobId}
+                  currentMode={runForm.mode}
+                  deletingJobId={deletingJobId}
+                  cancellingJobId={cancellingJobId}
+                />
+              </div>
+              <div className="log-subsection">
+                <div className="section-title section-title-compact">
+                  Selected Job Log
+                </div>
+                {selectedJob ? (
+                  <div className="selected-job-meta">
+                    <span className={`status-chip ${selectedJob.status}`}>
+                      {selectedJob.status}
+                    </span>
+                    <span>
+                      {(Array.isArray(selectedJob.stages) ? selectedJob.stages : []).filter(
+                        (stage) => stage.status === "completed",
+                      ).length}
+                      /{(Array.isArray(selectedJob.stages) ? selectedJob.stages : []).length}{" "}
+                      stages complete
+                    </span>
+                    {selectedJob.current_stage_name ? (
+                      <span>Current: {selectedJob.current_stage_name}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <pre className="log-view">
+                  {selectedJobLog ||
+                    "No log selected yet. Launch a pipeline run to watch logs stream here."}
+                </pre>
+              </div>
             </div>
-            <JobList
-              jobs={visibleJobs}
-              onSelect={selectJob}
-              onDelete={deleteJob}
-              selectedJobId={selectedJobId}
-              deletingJobId={deletingJobId}
-            />
-          </div>
-          <div className="form-subsection log-subsection">
-            <div className="section-title section-title-compact">
-              Selected Job Log
-            </div>
-            <pre className="log-view">
-              {selectedJobLog ||
-                "No log selected yet. Launch a pipeline run to watch logs stream here."}
-            </pre>
           </div>
         </div>
+      </section>
 
+      <section className="grid">
         <div className="card summary-card">
           {loadingSummary ? (
             <div className="muted">Loading summary...</div>

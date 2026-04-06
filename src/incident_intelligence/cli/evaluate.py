@@ -86,6 +86,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to save evaluation summary CSV",
     )
     parser.add_argument(
+        "--plots-dir",
+        type=str,
+        default=None,
+        help="Directory to save evaluation plots",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        type=str,
+        default=None,
+        help="Directory to save evaluation reports",
+    )
+    parser.add_argument(
         "--dataset-kind",
         choices=["snapshot", "temporal"],
         default="snapshot",
@@ -126,12 +138,12 @@ def main() -> None:
         if dataset_kind == "snapshot"
         else with_parent_dir_suffix("artifacts/metrics/evaluation_summary.csv", dataset_kind)
     )
-    plots_dir = (
+    plots_dir = args.plots_dir or (
         "artifacts/plots"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/plots", dataset_kind)
     )
-    reports_dir = (
+    reports_dir = args.reports_dir or (
         "artifacts/reports"
         if dataset_kind == "snapshot"
         else with_dataset_suffix("artifacts/reports", dataset_kind)
