@@ -4,7 +4,6 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-
 from fastapi import HTTPException
 
 from incident_intelligence.api.app import (
@@ -12,6 +11,7 @@ from incident_intelligence.api.app import (
     PipelineRunRequest,
     PipelineStage,
     _build_stages,
+    _run_pipeline_job,
     _load_jobs,
     _save_jobs,
     artifacts,
@@ -139,13 +139,14 @@ class DashboardApiTests(unittest.TestCase):
     def test_run_pipeline_custom_stages_keep_canonical_order(
         self, save_jobs_mock, thread_mock
     ) -> None:
-        response = run_pipeline(
-            PipelineRunRequest(
-                dataset_kind="temporal",
-                mode="custom",
-                stages=["evaluate_temporal", "generate_sequence"],
+        with patch("incident_intelligence.api.app._JOBS", {}):
+            response = run_pipeline(
+                PipelineRunRequest(
+                    dataset_kind="temporal",
+                    mode="custom",
+                    stages=["evaluate_temporal", "generate_sequence"],
+                )
             )
-        )
 
         self.assertEqual(
             [stage.stage_name for stage in response.stages],
@@ -305,8 +306,79 @@ class DashboardApiTests(unittest.TestCase):
         )
         save_jobs_mock.assert_called_once()
         thread_mock.return_value.start.assert_called_once()
-        save_jobs_mock.assert_called_once()
-        thread_mock.return_value.start.assert_called_once()
+
+    def test_run_pipeline_job_skips_completed_stages_when_continuing_custom_run(self) -> None:
+        continued_run = PipelineRun(
+            job_id="job-continue",
+            dataset_kind="temporal",
+            mode="custom",
+            requested_stages=[
+                "generate_sequence",
+                "build_temporal_features",
+                "train_temporal",
+                "evaluate_temporal",
+            ],
+            stages=[
+                PipelineStage(
+                    stage_id="job-continue:generate_sequence",
+                    stage_name="generate_sequence",
+                    stage_order=0,
+                    command=["python", "-m", "stage.generate_sequence"],
+                    log_path="/tmp/01_generate_sequence.log",
+                    status="completed",
+                ),
+                PipelineStage(
+                    stage_id="job-continue:build_temporal_features",
+                    stage_name="build_temporal_features",
+                    stage_order=1,
+                    command=["python", "-m", "stage.build_temporal_features"],
+                    log_path="/tmp/02_build_temporal_features.log",
+                    status="completed",
+                ),
+                PipelineStage(
+                    stage_id="job-continue:train_temporal",
+                    stage_name="train_temporal",
+                    stage_order=2,
+                    command=["python", "-m", "stage.train_temporal"],
+                    log_path="/tmp/03_train_temporal.log",
+                    status="completed",
+                ),
+                PipelineStage(
+                    stage_id="job-continue:evaluate_temporal",
+                    stage_name="evaluate_temporal",
+                    stage_order=3,
+                    command=["python", "-m", "stage.evaluate_temporal"],
+                    log_path="/tmp/04_evaluate_temporal.log",
+                    status="queued",
+                ),
+            ],
+            status="queued",
+        )
+
+        popen_calls: list[list[str]] = []
+
+        class FakeProcess:
+            def __init__(self, command, **_kwargs):
+                popen_calls.append(command)
+
+            def wait(self):
+                return 0
+
+        with (
+            patch("incident_intelligence.api.app._JOBS", {"job-continue": continued_run}),
+            patch("incident_intelligence.api.app._save_jobs"),
+            patch("incident_intelligence.api.app.subprocess.Popen", side_effect=FakeProcess),
+        ):
+            _run_pipeline_job("job-continue")
+
+        self.assertEqual(
+            popen_calls,
+            [["python", "-m", "stage.evaluate_temporal"]],
+        )
+        self.assertEqual(
+            [stage.status for stage in continued_run.stages],
+            ["completed", "completed", "completed", "completed"],
+        )
 
     def test_get_project_file_rejects_outside_allowed_roots(self) -> None:
         with self.assertRaises(HTTPException) as exc_info:

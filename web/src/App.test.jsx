@@ -101,6 +101,7 @@ describe("App", () => {
     expect(await screen.findByText("Selected Job Log")).toBeInTheDocument();
     expect(await screen.findByText("Evaluation & Explainability Visuals")).toBeInTheDocument();
     expect(await screen.findByText("Artifact Inventory")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("legacy-j").closest("button"));
     expect(await screen.findByText("0/0 stages")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /delete job legacy-job-1/i })).toBeInTheDocument();
   });
@@ -279,6 +280,7 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(await screen.findAllByText("0.8500")).toHaveLength(2);
     expect(await screen.findByText("shap importance")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("job-1").closest("button"));
     expect(await screen.findByText("2/2 stages")).toBeInTheDocument();
     expect(await screen.findAllByText("train_snapshot")).not.toHaveLength(0);
 
@@ -431,10 +433,10 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Staged Runs")).toBeInTheDocument();
+    expect(await screen.findByText("Custom Pipeline Runs")).toBeInTheDocument();
     expect(await screen.findByText("Full Pipeline Runs")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("run job-cust").closest("button"));
+    fireEvent.click(screen.getByText("job-cust").closest("button"));
     expect(screen.getByDisplayValue("logistic,rf")).not.toBeDisabled();
     expect(screen.getByRole("button", { name: /^custom$/i })).toHaveClass("active");
     expect(screen.getByLabelText(/generate_snapshot/i)).toBeDisabled();
@@ -580,7 +582,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: /^full$/i })).toHaveClass("active");
     expect(screen.getByRole("button", { name: /^snapshot$/i })).toHaveClass("active");
 
-    fireEvent.click((await screen.findByText("run job-temp")).closest("button"));
+    fireEvent.click((await screen.findByText("job-temp")).closest("button"));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /^full$/i })).toHaveClass("active");
@@ -704,7 +706,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click((await screen.findByText("run job-snap")).closest("button"));
+    fireEvent.click((await screen.findByText("job-snap")).closest("button"));
 
     await waitFor(() => {
       expect(screen.getByText("snapshot log")).toBeInTheDocument();
@@ -716,6 +718,537 @@ describe("App", () => {
       expect(screen.queryByText("snapshot log")).not.toBeInTheDocument();
       expect(screen.getByText(/No log selected yet/i)).toBeInTheDocument();
     });
+  });
+
+  it("restores the in-progress custom run for a workflow after switching away and back", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.includes("/api/dashboard/summary/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              evaluation_metrics: { models: [] },
+              artifacts: {
+                models_dir: "artifacts/models",
+                best_model: "artifacts/models/best_model.joblib",
+                evaluation_metrics: "artifacts/metrics/evaluation.json",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/dashboard/summary/temporal")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "temporal",
+              evaluation_metrics: { models: [] },
+              artifacts: {
+                models_dir: "artifacts/models_temporal",
+                best_model: "artifacts/models_temporal/best_model.joblib",
+                evaluation_metrics: "artifacts/metrics_temporal/evaluation.json",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/temporal")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "temporal",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                job_id: "job-snap-custom",
+                dataset_kind: "snapshot",
+                mode: "custom",
+                requested_stages: ["generate_snapshot"],
+                status: "completed",
+                created_at: "2026-04-06T09:00:00+00:00",
+                finished_at: "2026-04-06T09:01:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-snap-custom",
+                stages: [
+                  {
+                    stage_id: "job-snap-custom:generate_snapshot",
+                    stage_name: "generate_snapshot",
+                    stage_order: 0,
+                    status: "completed",
+                    command: ["python"],
+                    log_path:
+                      "artifacts/api_runs/job-snap-custom/01_generate_snapshot.log",
+                  },
+                ],
+              },
+              {
+                job_id: "job-temp-custom",
+                dataset_kind: "temporal",
+                mode: "custom",
+                requested_stages: ["generate_sequence"],
+                status: "completed",
+                created_at: "2026-04-06T09:05:00+00:00",
+                finished_at: "2026-04-06T09:06:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-temp-custom",
+                stages: [
+                  {
+                    stage_id: "job-temp-custom:generate_sequence",
+                    stage_name: "generate_sequence",
+                    stage_order: 0,
+                    status: "completed",
+                    command: ["python"],
+                    log_path:
+                      "artifacts/api_runs/job-temp-custom/01_generate_sequence.log",
+                  },
+                ],
+              },
+            ]),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-snap-custom/log")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ log: "snapshot staged log", stages: [] })),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-temp-custom/log")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ log: "temporal staged log", stages: [] })),
+        );
+      }
+
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
+    fireEvent.click((await screen.findByText("job-snap")).closest("button"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Continuing staged run job-snap with: train_snapshot/i),
+      ).toBeInTheDocument();
+    });
+    expect(checkboxFor(/generate_snapshot/i)).toBeDisabled();
+    expect(checkboxFor(/train_snapshot/i)).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^temporal$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
+    fireEvent.click((await screen.findByText("job-temp")).closest("button"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Continuing staged run job-temp with: build_temporal_features/i),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^snapshot$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Continuing staged run job-snap with: train_snapshot/i),
+      ).toBeInTheDocument();
+    });
+    expect(checkboxFor(/generate_snapshot/i)).toBeDisabled();
+    expect(checkboxFor(/train_snapshot/i)).toBeEnabled();
+  });
+
+  it("restores the selected custom run log and run-scoped artifacts when switching away and back to its workflow", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.includes("/api/dashboard/summary/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              evaluation_metrics: { models: [] },
+              artifacts: {
+                models_dir: "artifacts/models",
+                best_model: "artifacts/models/best_model.joblib",
+                evaluation_metrics: "artifacts/metrics/evaluation.json",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/dashboard/summary/temporal")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "temporal",
+              evaluation_metrics: { models: [] },
+              artifacts: {
+                models_dir: "artifacts/models_temporal",
+                best_model: "artifacts/models_temporal/best_model.joblib",
+                evaluation_metrics: "artifacts/metrics_temporal/evaluation.json",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/temporal")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "temporal",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                job_id: "job-temp-custom",
+                dataset_kind: "temporal",
+                mode: "custom",
+                requested_stages: ["generate_sequence"],
+                status: "completed",
+                created_at: "2026-04-06T10:00:00+00:00",
+                finished_at: "2026-04-06T10:01:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-temp-custom",
+                stages: [
+                  {
+                    stage_id: "job-temp-custom:generate_sequence",
+                    stage_name: "generate_sequence",
+                    stage_order: 0,
+                    status: "completed",
+                    command: ["python"],
+                    log_path:
+                      "artifacts/api_runs/job-temp-custom/01_generate_sequence.log",
+                  },
+                ],
+              },
+            ]),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-temp-custom/log")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ log: "temporal staged log", stages: [] }),
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^temporal$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
+    fireEvent.click((await screen.findByText("job-temp")).closest("button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("temporal staged log")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^snapshot$/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("temporal staged log")).not.toBeInTheDocument();
+      expect(screen.getByText(/No log selected yet/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^temporal$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("temporal staged log")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Continuing staged run job-temp with: build_temporal_features/i),
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/dashboard/summary/temporal?job_id=job-temp-custom"),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/artifacts/temporal?job_id=job-temp-custom"),
+      ),
+    ).toBe(true);
+  });
+
+  it("advances a fresh custom run even when another same-workflow staged run is active", async () => {
+    let jobsResponse = [
+      {
+        job_id: "job-temp-old",
+        dataset_kind: "temporal",
+        mode: "custom",
+        requested_stages: [
+          "generate_sequence",
+          "build_temporal_features",
+          "train_temporal",
+        ],
+        status: "running",
+        created_at: "2026-04-06T10:00:00+00:00",
+        current_stage_name: "train_temporal",
+        log_path: "artifacts/api_runs/job-temp-old",
+        stages: [
+          {
+            stage_id: "job-temp-old:generate_sequence",
+            stage_name: "generate_sequence",
+            stage_order: 0,
+            status: "completed",
+            command: ["python"],
+            log_path: "artifacts/api_runs/job-temp-old/01_generate_sequence.log",
+          },
+          {
+            stage_id: "job-temp-old:build_temporal_features",
+            stage_name: "build_temporal_features",
+            stage_order: 1,
+            status: "completed",
+            command: ["python"],
+            log_path:
+              "artifacts/api_runs/job-temp-old/02_build_temporal_features.log",
+          },
+          {
+            stage_id: "job-temp-old:train_temporal",
+            stage_name: "train_temporal",
+            stage_order: 2,
+            status: "running",
+            command: ["python"],
+            log_path: "artifacts/api_runs/job-temp-old/03_train_temporal.log",
+          },
+        ],
+      },
+    ];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, options = {}) => {
+        const url = String(input);
+
+        if (url.includes("/api/dashboard/summary/temporal")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                dataset_kind: "temporal",
+                evaluation_metrics: { models: [] },
+                artifacts: {
+                  models_dir: "artifacts/models_temporal",
+                  best_model: "artifacts/models_temporal/best_model.joblib",
+                  evaluation_metrics: "artifacts/metrics_temporal/evaluation.json",
+                },
+              }),
+            ),
+          );
+        }
+
+        if (url.includes("/api/artifacts/temporal")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                dataset_kind: "temporal",
+                artifacts: {
+                  models_dir: [],
+                  train_metrics: [],
+                  plots_dir: [],
+                  reports_dir: [],
+                  explain_dir: [],
+                },
+              }),
+            ),
+          );
+        }
+
+        if (url.endsWith("/api/pipeline/jobs")) {
+          return Promise.resolve(new Response(JSON.stringify(jobsResponse)));
+        }
+
+        if (url.endsWith("/api/pipeline/jobs/job-temp-old/log")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ log: "old temporal log", stages: [] })),
+          );
+        }
+
+        if (url.endsWith("/api/pipeline/jobs/job-temp-new/log")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ log: "new temporal log", stages: [] })),
+          );
+        }
+
+        if (url.endsWith("/api/pipeline/run") && options.method === "POST") {
+          jobsResponse = [
+            {
+              job_id: "job-temp-old",
+              dataset_kind: "temporal",
+              mode: "custom",
+              requested_stages: [
+                "generate_sequence",
+                "build_temporal_features",
+                "train_temporal",
+              ],
+              status: "running",
+              created_at: "2026-04-06T10:00:00+00:00",
+              current_stage_name: "train_temporal",
+              log_path: "artifacts/api_runs/job-temp-old",
+              stages: [
+                {
+                  stage_id: "job-temp-old:generate_sequence",
+                  stage_name: "generate_sequence",
+                  stage_order: 0,
+                  status: "completed",
+                  command: ["python"],
+                  log_path:
+                    "artifacts/api_runs/job-temp-old/01_generate_sequence.log",
+                },
+                {
+                  stage_id: "job-temp-old:build_temporal_features",
+                  stage_name: "build_temporal_features",
+                  stage_order: 1,
+                  status: "completed",
+                  command: ["python"],
+                  log_path:
+                    "artifacts/api_runs/job-temp-old/02_build_temporal_features.log",
+                },
+                {
+                  stage_id: "job-temp-old:train_temporal",
+                  stage_name: "train_temporal",
+                  stage_order: 2,
+                  status: "running",
+                  command: ["python"],
+                  log_path: "artifacts/api_runs/job-temp-old/03_train_temporal.log",
+                },
+              ],
+            },
+            {
+              job_id: "job-temp-new",
+              dataset_kind: "temporal",
+              mode: "custom",
+              requested_stages: ["generate_sequence"],
+              status: "completed",
+              created_at: "2026-04-06T10:10:00+00:00",
+              finished_at: "2026-04-06T10:11:00+00:00",
+              current_stage_name: null,
+              log_path: "artifacts/api_runs/job-temp-new",
+              stages: [
+                {
+                  stage_id: "job-temp-new:generate_sequence",
+                  stage_name: "generate_sequence",
+                  stage_order: 0,
+                  status: "completed",
+                  command: ["python"],
+                  log_path: "artifacts/api_runs/job-temp-new/01_generate_sequence.log",
+                },
+              ],
+            },
+          ];
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                job_id: "job-temp-new",
+                dataset_kind: "temporal",
+                mode: "custom",
+                requested_stages: ["generate_sequence"],
+                status: "queued",
+                created_at: "2026-04-06T10:10:00+00:00",
+                current_stage_name: "generate_sequence",
+                log_path: "artifacts/api_runs/job-temp-new",
+                stages: [],
+              }),
+            ),
+          );
+        }
+
+        return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+      });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^temporal$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
+    fireEvent.click((await screen.findByText("job-temp")).closest("button"));
+
+    await screen.findByText(/Wait for train_temporal to finish before continuing/i);
+    fireEvent.click(screen.getByRole("button", { name: /start new staged run/i }));
+    fireEvent.click(screen.getByRole("button", { name: /run generate sequence/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Continuing staged run job-temp with: build_temporal_features/i),
+      ).toBeInTheDocument();
+    });
+    expect(checkboxFor(/generate_sequence/i)).toBeDisabled();
+    expect(checkboxFor(/build_temporal_features/i)).toBeEnabled();
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/pipeline/jobs/job-temp-new/log"),
+      ),
+    ).toBe(true);
   });
 
   it("can start a brand-new staged run instead of continuing an existing one", async () => {
@@ -815,7 +1348,7 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
-    fireEvent.click((await screen.findByText("run job-cust")).closest("button"));
+    fireEvent.click((await screen.findByText("job-cust")).closest("button"));
     expect(await screen.findByText("custom log")).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: /start new staged run/i }),
@@ -980,7 +1513,7 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^temporal$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
-    fireEvent.click((await screen.findByText("run job-temp")).closest("button"));
+    fireEvent.click((await screen.findByText("job-temp")).closest("button"));
 
     await waitFor(() => {
       expect(
@@ -997,6 +1530,11 @@ describe("App", () => {
       const nextStageCheckbox = checkboxFor(/train_temporal/i);
       expect(nextStageCheckbox).toBeChecked();
       expect(nextStageCheckbox).toBeDisabled();
+      expect(screen.getByLabelText(/models/i)).toBeDisabled();
+      expect(screen.getByLabelText(/scoring/i)).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: /run train temporal/i }),
+      ).toBeDisabled();
     });
   });
 
@@ -1105,7 +1643,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click((await screen.findByText("run job-comp")).closest("button"));
+    fireEvent.click((await screen.findByText("job-comp")).closest("button"));
 
     expect(
       await screen.findByText(/Staged run .* is complete\./i),

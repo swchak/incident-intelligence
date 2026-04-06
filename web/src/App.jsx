@@ -52,6 +52,34 @@ function shortRunId(jobId) {
   return jobId.slice(0, 8);
 }
 
+function formatJobTime(timestamp) {
+  if (!timestamp) {
+    return "";
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+function lastStageLabel(job) {
+  const stages = Array.isArray(job.stages) ? job.stages : [];
+  if (job.current_stage_name) {
+    return humanizeStageName(job.current_stage_name);
+  }
+  if (stages.length) {
+    const ordered = [...stages].sort((left, right) => left.stage_order - right.stage_order);
+    return humanizeStageName(ordered[ordered.length - 1].stage_name);
+  }
+  return "No stages yet";
+}
+
 function isVisualArtifact(path) {
   return /\.(png|jpg|jpeg|svg|webp)$/i.test(path);
 }
@@ -299,7 +327,7 @@ function JobList({
   const groupedJobs = [
     {
       key: "custom",
-      title: "Staged Runs",
+      title: "Custom Pipeline Runs",
       items: jobs.filter((job) => job.mode === "custom"),
     },
     {
@@ -318,7 +346,8 @@ function JobList({
             <div className="job-list-header-main">
               <span>Status</span>
               <span>Kind</span>
-              <span>Time</span>
+              <span>Run ID</span>
+              <span>Last Stage</span>
             </div>
             <span>Action</span>
           </div>
@@ -328,44 +357,29 @@ function JobList({
               const completedStageCount = stages.filter(
                 (stage) => stage.status === "completed",
               ).length;
+              const isExpanded = selectedJobId === job.job_id;
               return (
                 <div
                   key={job.job_id}
                   className={`job-item ${
-                    selectedJobId === job.job_id ? "selected" : ""
+                    isExpanded ? "selected" : ""
                   }`}
                 >
                   <button
                     className="job-select"
                     onClick={() => onSelect(job)}
                     type="button"
+                    aria-expanded={isExpanded}
                   >
                     <div className="job-primary-row">
                       <span className={`status-chip ${job.status}`}>{job.status}</span>
                       <span className="job-kind">{job.dataset_kind}</span>
-                      <span className="job-meta">
-                        {job.finished_at
-                          ? `finished ${job.finished_at}`
-                          : job.current_stage_name
-                            ? `running ${job.current_stage_name}`
-                            : job.created_at}
-                      </span>
-                    </div>
-                    <div className="job-secondary-row">
-                      <span className="job-mode">{job.mode}</span>
-                      <span className="job-run-id">run {shortRunId(job.job_id)}</span>
-                      <span className="job-stage-summary">
-                        {completedStageCount}/{stages.length} stages
-                      </span>
-                      <span className="job-stage-list">
-                        {stages.map((stage) => (
-                          <span
-                            key={stage.stage_id}
-                            className={`stage-chip ${stage.status}`}
-                          >
-                            {stage.stage_name}
-                          </span>
-                        ))}
+                      <span className="job-run-id">{shortRunId(job.job_id)}</span>
+                      <span className="job-last-stage">
+                        <span>{lastStageLabel(job)}</span>
+                        <span className="job-toggle-indicator" aria-hidden="true">
+                          {isExpanded ? "Collapse ▴" : "Details ▾"}
+                        </span>
                       </span>
                     </div>
                   </button>
@@ -394,6 +408,41 @@ function JobList({
                       {deletingJobId === job.job_id ? "Deleting..." : "Delete Run"}
                     </button>
                   )}
+                  {isExpanded ? (
+                    <div className="job-details">
+                      <div className="job-secondary-row">
+                        <span className="job-stage-summary">
+                          {completedStageCount}/{stages.length} stages
+                        </span>
+                      </div>
+                      <div className="job-stage-list" role="list" aria-label={`Stages for ${job.job_id}`}>
+                        {stages.length ? (
+                          stages.map((stage) => (
+                            <div
+                              key={stage.stage_id}
+                              className="job-stage-row"
+                              role="listitem"
+                            >
+                              <span className="job-stage-name">
+                                {humanizeStageName(stage.stage_name)}
+                              </span>
+                              <span
+                                className={`job-stage-indicator ${
+                                  stage.status === "completed" ? "done" : "not-done"
+                                }`}
+                                title={stage.status}
+                                aria-hidden="true"
+                              >
+                                {stage.status === "completed" ? "✓" : "✕"}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="muted">No stages recorded yet.</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             })()
@@ -445,6 +494,7 @@ export default function App() {
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedJobLog, setSelectedJobLog] = useState("");
   const [forceNewCustomRun, setForceNewCustomRun] = useState(false);
+  const [activeCustomRunByDataset, setActiveCustomRunByDataset] = useState({});
   const [deletingJobId, setDeletingJobId] = useState(null);
   const [cancellingJobId, setCancellingJobId] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(false);
@@ -552,11 +602,22 @@ export default function App() {
     setError("");
     setDeletingJobId(jobId);
     try {
+      const deletedJob = jobs.find((job) => job.job_id === jobId) || null;
       await fetchJson(`/api/pipeline/jobs/${jobId}`, { method: "DELETE" });
-      const nextJobs = jobs.filter((job) => job.job_id !== jobId);
       if (selectedJobId === jobId) {
         setSelectedJobId(null);
         setSelectedJobLog("");
+      }
+      if (deletedJob?.mode === "custom") {
+        setActiveCustomRunByDataset((current) => {
+          if (current[deletedJob.dataset_kind] !== jobId) {
+            return current;
+          }
+          return {
+            ...current,
+            [deletedJob.dataset_kind]: null,
+          };
+        });
       }
       await refreshJobs();
     } catch (err) {
@@ -581,13 +642,28 @@ export default function App() {
 
   function selectDatasetKind(kind) {
     setForceNewCustomRun(false);
-    setSelectedJobId(null);
+    const rememberedCustomRunId =
+      runForm.mode === "custom" ? activeCustomRunByDataset[kind] || null : null;
+    setSelectedJobId(rememberedCustomRunId);
     setSelectedJobLog("");
     setDatasetKind(kind);
   }
 
   function selectJob(job) {
+    if (selectedJobId === job.job_id) {
+      setForceNewCustomRun(false);
+      setSelectedJobId(null);
+      setSelectedJobLog("");
+      refreshDashboard(datasetKind);
+      return;
+    }
     setForceNewCustomRun(false);
+    if (job.mode === "custom") {
+      setActiveCustomRunByDataset((current) => ({
+        ...current,
+        [job.dataset_kind]: job.job_id,
+      }));
+    }
     setRunForm((current) => ({
       ...current,
       mode: job.mode === "custom" ? "custom" : "full",
@@ -644,6 +720,13 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (nextMode === "custom") {
+        setActiveCustomRunByDataset((current) => ({
+          ...current,
+          [datasetKind]: job.job_id,
+        }));
+        setForceNewCustomRun(false);
+      }
       setSelectedJobId(job.job_id);
       await refreshJobs();
     } catch (err) {
@@ -734,8 +817,42 @@ export default function App() {
     ) {
       return selectedJob;
     }
-    return null;
-  }, [datasetKind, forceNewCustomRun, runForm.mode, selectedJob]);
+    const rememberedJobId = activeCustomRunByDataset[datasetKind];
+    if (!rememberedJobId) {
+      return null;
+    }
+    const rememberedJob =
+      jobs.find(
+        (job) =>
+          job.job_id === rememberedJobId &&
+          job.dataset_kind === datasetKind &&
+          job.mode === "custom",
+      ) || null;
+    if (!rememberedJob) {
+      return null;
+    }
+    const rememberedCompletedStages = completedStageNamesForJobs(
+      jobs,
+      datasetKind,
+      rememberedJob,
+    );
+    const rememberedRunComplete =
+      rememberedCompletedStages.size === STAGE_OPTIONS[datasetKind].length;
+    if (
+      rememberedRunComplete &&
+      !["queued", "running", "cancelling"].includes(rememberedJob.status)
+    ) {
+      return null;
+    }
+    return rememberedJob;
+  }, [
+    activeCustomRunByDataset,
+    datasetKind,
+    forceNewCustomRun,
+    jobs,
+    runForm.mode,
+    selectedJob,
+  ]);
   const customRunLocked = Boolean(
     selectedCustomRun &&
       ["queued", "running", "cancelling"].includes(selectedCustomRun.status),
@@ -875,7 +992,8 @@ export default function App() {
 
   const trainStageName = datasetKind === "snapshot" ? "train_snapshot" : "train_temporal";
   const tuningEnabled =
-    runForm.mode === "full" || runForm.stages.includes(trainStageName);
+    !customRunLocked &&
+    (runForm.mode === "full" || runForm.stages.includes(trainStageName));
   const runButtonLabel = useMemo(() => {
     if (submitting) {
       return "Starting...";
@@ -910,7 +1028,7 @@ export default function App() {
     }
     setRunForm((current) => {
       const filteredStages = customRunLocked
-        ? current.stages.filter((stageName) => stageName === nextIncompleteStage)
+        ? current.stages.filter((stageName) => stageName === lockedPreviewStage)
         : current.stages.filter((stageName) => stageAvailability[stageName]?.enabled);
       if (filteredStages.length === current.stages.length) {
         return current;
@@ -925,7 +1043,7 @@ export default function App() {
               : [],
       };
     });
-  }, [customRunLocked, nextIncompleteStage, nextRunnableStage, runForm.mode, stageAvailability]);
+  }, [customRunLocked, lockedPreviewStage, nextRunnableStage, runForm.mode, stageAvailability]);
 
   useEffect(() => {
     if (runForm.mode !== "custom" || !forceNewCustomRun) {
@@ -1113,6 +1231,10 @@ export default function App() {
                         onClick={() => {
                           setSelectedJobId(null);
                           setSelectedJobLog("");
+                          setActiveCustomRunByDataset((current) => ({
+                            ...current,
+                            [datasetKind]: null,
+                          }));
                           setForceNewCustomRun(true);
                         }}
                       >
@@ -1219,6 +1341,7 @@ export default function App() {
                           type="submit"
                           disabled={
                             submitting ||
+                            customRunLocked ||
                             (runForm.mode === "custom" && runForm.stages.length === 0)
                           }
                         >
@@ -1231,45 +1354,49 @@ export default function App() {
               </div>
             </form>
           </div>
-          <div className="form-subsection jobs-subsection">
-            <div className="section-title section-title-compact">
-              Recent Jobs
-            </div>
-            <JobList
-              jobs={visibleJobs}
-              onSelect={selectJob}
-              onDelete={deleteJob}
-              onCancel={cancelJob}
-              selectedJobId={selectedJobId}
-              deletingJobId={deletingJobId}
-              cancellingJobId={cancellingJobId}
-            />
-          </div>
-          <div className="form-subsection log-subsection">
-            <div className="section-title section-title-compact">
-              Selected Job Log
-            </div>
-            {selectedJob ? (
-              <div className="selected-job-meta">
-                <span className={`status-chip ${selectedJob.status}`}>
-                  {selectedJob.status}
-                </span>
-                <span>
-                  {(Array.isArray(selectedJob.stages) ? selectedJob.stages : []).filter(
-                    (stage) => stage.status === "completed",
-                  ).length}
-                  /{(Array.isArray(selectedJob.stages) ? selectedJob.stages : []).length}{" "}
-                  stages complete
-                </span>
-                {selectedJob.current_stage_name ? (
-                  <span>Current: {selectedJob.current_stage_name}</span>
-                ) : null}
+          <div className="form-subsection run-activity-subsection">
+            <div className="run-activity-grid">
+              <div className="jobs-subsection">
+                <div className="section-title section-title-compact">
+                  Recent Jobs
+                </div>
+                <JobList
+                  jobs={visibleJobs}
+                  onSelect={selectJob}
+                  onDelete={deleteJob}
+                  onCancel={cancelJob}
+                  selectedJobId={selectedJobId}
+                  deletingJobId={deletingJobId}
+                  cancellingJobId={cancellingJobId}
+                />
               </div>
-            ) : null}
-            <pre className="log-view">
-              {selectedJobLog ||
-                "No log selected yet. Launch a pipeline run to watch logs stream here."}
-            </pre>
+              <div className="log-subsection">
+                <div className="section-title section-title-compact">
+                  Selected Job Log
+                </div>
+                {selectedJob ? (
+                  <div className="selected-job-meta">
+                    <span className={`status-chip ${selectedJob.status}`}>
+                      {selectedJob.status}
+                    </span>
+                    <span>
+                      {(Array.isArray(selectedJob.stages) ? selectedJob.stages : []).filter(
+                        (stage) => stage.status === "completed",
+                      ).length}
+                      /{(Array.isArray(selectedJob.stages) ? selectedJob.stages : []).length}{" "}
+                      stages complete
+                    </span>
+                    {selectedJob.current_stage_name ? (
+                      <span>Current: {selectedJob.current_stage_name}</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <pre className="log-view">
+                  {selectedJobLog ||
+                    "No log selected yet. Launch a pipeline run to watch logs stream here."}
+                </pre>
+              </div>
+            </div>
           </div>
         </div>
       </section>

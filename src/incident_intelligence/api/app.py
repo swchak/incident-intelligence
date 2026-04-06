@@ -821,10 +821,12 @@ def _run_pipeline_job(job_id: str) -> None:
                         pending.status = "skipped"
                 _save_jobs()
                 return
-            current.current_stage_name = stage.stage_name
             active_stage = next(
                 item for item in current.stages if item.stage_id == stage.stage_id
             )
+            if active_stage.status != "queued":
+                continue
+            current.current_stage_name = stage.stage_name
             active_stage.status = "running"
             active_stage.started_at = _utc_now()
             _save_jobs()
