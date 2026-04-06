@@ -317,6 +317,7 @@ function JobList({
   onDelete,
   onCancel,
   selectedJobId,
+  currentMode,
   deletingJobId,
   cancellingJobId,
 }) {
@@ -335,7 +336,30 @@ function JobList({
       title: "Full Pipeline Runs",
       items: jobs.filter((job) => job.mode !== "custom"),
     },
-  ].filter((group) => group.items.length);
+  ]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((left, right) => {
+        if (left.job_id === selectedJobId && right.job_id !== selectedJobId) {
+          return -1;
+        }
+        if (right.job_id === selectedJobId && left.job_id !== selectedJobId) {
+          return 1;
+        }
+        return 0;
+      }),
+    }))
+    .filter((group) => group.items.length)
+    .sort((left, right) => {
+      const activeGroupKey = currentMode === "custom" ? "custom" : "full";
+      if (left.key === activeGroupKey && right.key !== activeGroupKey) {
+        return -1;
+      }
+      if (right.key === activeGroupKey && left.key !== activeGroupKey) {
+        return 1;
+      }
+      return 0;
+    });
 
   return (
     <div className="job-list">
@@ -1366,6 +1390,7 @@ export default function App() {
                   onDelete={deleteJob}
                   onCancel={cancelJob}
                   selectedJobId={selectedJobId}
+                  currentMode={runForm.mode}
                   deletingJobId={deletingJobId}
                   cancellingJobId={cancellingJobId}
                 />
