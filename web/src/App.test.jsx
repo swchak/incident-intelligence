@@ -96,7 +96,7 @@ describe("App", () => {
       }),
     ).toBeInTheDocument();
     expect(await screen.findByText("Run Pipeline")).toBeInTheDocument();
-    expect(await screen.findByText("Latest Summary")).toBeInTheDocument();
+    expect(await screen.findByText("Latest Run Results")).toBeInTheDocument();
     expect(await screen.findByText("Recent Jobs")).toBeInTheDocument();
     expect(await screen.findByText("Selected Job Log")).toBeInTheDocument();
     expect(await screen.findByText("Evaluation & Explainability Visuals")).toBeInTheDocument();
@@ -592,7 +592,7 @@ describe("App", () => {
     });
   });
 
-  it("clears the selected run when switching workflow tabs manually", async () => {
+  it("selects the most recent run when switching workflow tabs manually", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
 
@@ -692,6 +692,27 @@ describe("App", () => {
                   },
                 ],
               },
+              {
+                job_id: "job-temporal",
+                dataset_kind: "temporal",
+                mode: "custom",
+                requested_stages: ["generate_sequence"],
+                status: "completed",
+                created_at: "2026-03-31T00:06:00+00:00",
+                finished_at: "2026-03-31T00:07:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-temporal",
+                stages: [
+                  {
+                    stage_id: "job-temporal:generate_sequence",
+                    stage_name: "generate_sequence",
+                    stage_order: 0,
+                    status: "completed",
+                    command: ["python"],
+                    log_path: "artifacts/api_runs/job-temporal/01_generate_sequence.log",
+                  },
+                ],
+              },
             ]),
           ),
         );
@@ -699,6 +720,10 @@ describe("App", () => {
 
       if (url.endsWith("/api/pipeline/jobs/job-snapshot/log")) {
         return Promise.resolve(new Response(JSON.stringify({ log: "snapshot log", stages: [] })));
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-temporal/log")) {
+        return Promise.resolve(new Response(JSON.stringify({ log: "temporal log", stages: [] })));
       }
 
       return Promise.reject(new Error(`Unhandled fetch: ${url}`));
@@ -716,7 +741,11 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.queryByText("snapshot log")).not.toBeInTheDocument();
-      expect(screen.getByText(/No log selected yet/i)).toBeInTheDocument();
+      expect(screen.getByText("temporal log")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^custom$/i })).toHaveClass("active");
+      expect(
+        screen.getByText(/Continuing staged run job-temp with: build_temporal_features/i),
+      ).toBeInTheDocument();
     });
   });
 
@@ -873,7 +902,6 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^temporal$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
-    fireEvent.click((await screen.findByText("job-temp")).closest("button"));
 
     await waitFor(() => {
       expect(
@@ -1249,6 +1277,114 @@ describe("App", () => {
         String(url).includes("/api/pipeline/jobs/job-temp-new/log"),
       ),
     ).toBe(true);
+  });
+
+  it("collapsing a selected custom run resets the form to a fresh staged run", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.includes("/api/dashboard/summary/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              evaluation_metrics: { models: [] },
+              artifacts: {
+                models_dir: "artifacts/models",
+                best_model: "artifacts/models/best_model.joblib",
+                evaluation_metrics: "artifacts/metrics/evaluation.json",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                job_id: "job-custom",
+                dataset_kind: "snapshot",
+                mode: "custom",
+                requested_stages: ["generate_snapshot", "train_snapshot"],
+                status: "completed",
+                created_at: "2026-04-06T10:00:00+00:00",
+                finished_at: "2026-04-06T10:05:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-custom",
+                stages: [
+                  {
+                    stage_id: "job-custom:generate_snapshot",
+                    stage_name: "generate_snapshot",
+                    stage_order: 0,
+                    status: "completed",
+                    command: ["python"],
+                    log_path: "artifacts/api_runs/job-custom/01_generate_snapshot.log",
+                  },
+                  {
+                    stage_id: "job-custom:train_snapshot",
+                    stage_name: "train_snapshot",
+                    stage_order: 1,
+                    status: "completed",
+                    command: ["python"],
+                    log_path: "artifacts/api_runs/job-custom/02_train_snapshot.log",
+                  },
+                ],
+              },
+            ]),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-custom/log")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ log: "custom log", stages: [] })),
+        );
+      }
+
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
+    fireEvent.click((await screen.findByText("job-cust")).closest("button"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Continuing staged run job-cust with: evaluate_snapshot/i),
+      ).toBeInTheDocument();
+      expect(screen.getByText("custom log")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("job-cust").closest("button"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Starting a staged run with: generate_snapshot/i),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("custom log")).not.toBeInTheDocument();
+    });
+    expect(checkboxFor(/generate_snapshot/i)).toBeEnabled();
+    expect(checkboxFor(/train_snapshot/i)).toBeDisabled();
   });
 
   it("can start a brand-new staged run instead of continuing an existing one", async () => {
