@@ -52,6 +52,21 @@ function shortRunId(jobId) {
   return jobId.slice(0, 8);
 }
 
+function latestJobForDataset(jobs, datasetKind) {
+  const timestampForJob = (job) => {
+    const raw = job.finished_at || job.created_at || "";
+    const parsed = raw ? Date.parse(raw) : Number.NaN;
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  return (
+    [...jobs]
+      .filter((job) => job.dataset_kind === datasetKind)
+      .sort((left, right) => timestampForJob(right) - timestampForJob(left))[0] ||
+    null
+  );
+}
+
 function formatJobTime(timestamp) {
   if (!timestamp) {
     return "";
@@ -666,16 +681,38 @@ export default function App() {
 
   function selectDatasetKind(kind) {
     setForceNewCustomRun(false);
-    const rememberedCustomRunId =
-      runForm.mode === "custom" ? activeCustomRunByDataset[kind] || null : null;
-    setSelectedJobId(rememberedCustomRunId);
+    const latestJob = latestJobForDataset(jobs, kind);
+    if (latestJob?.mode === "custom") {
+      setActiveCustomRunByDataset((current) => ({
+        ...current,
+        [kind]: latestJob.job_id,
+      }));
+    }
+    setRunForm((current) => ({
+      ...current,
+      mode: latestJob?.mode === "custom" ? "custom" : "full",
+      stages:
+        latestJob?.mode === "full"
+          ? STAGE_OPTIONS[kind]
+          : current.stages,
+      cv: kind === "temporal" && !current.cv ? "3" : current.cv,
+    }));
+    setSelectedJobId(latestJob?.job_id || null);
     setSelectedJobLog("");
     setDatasetKind(kind);
   }
 
   function selectJob(job) {
     if (selectedJobId === job.job_id) {
-      setForceNewCustomRun(false);
+      if (job.mode === "custom") {
+        setActiveCustomRunByDataset((current) => ({
+          ...current,
+          [job.dataset_kind]: null,
+        }));
+        setForceNewCustomRun(true);
+      } else {
+        setForceNewCustomRun(false);
+      }
       setSelectedJobId(null);
       setSelectedJobLog("");
       refreshDashboard(datasetKind);
@@ -886,12 +923,22 @@ export default function App() {
     ["completed", "failed", "cancelled"].includes(selectedCustomRun.status)
       ? selectedCustomRun
       : null;
+  const selectedResultsJob =
+    selectedJob && selectedJob.dataset_kind === datasetKind
+      ? selectedJob
+      : selectedCustomRun;
   const completedStages = useMemo(() => {
     if (runForm.mode === "custom" && !selectedCustomRun) {
       return new Set();
     }
     return completedStageNamesForJobs(jobs, datasetKind, selectedCustomRun);
   }, [jobs, datasetKind, runForm.mode, selectedCustomRun]);
+  const resultCompletedStages = useMemo(() => {
+    if (!selectedResultsJob) {
+      return new Set();
+    }
+    return completedStageNamesForJobs(jobs, datasetKind, selectedResultsJob);
+  }, [datasetKind, jobs, selectedResultsJob]);
   const nextIncompleteStage = useMemo(
     () =>
       STAGE_OPTIONS[datasetKind].find((stageName) => !completedStages.has(stageName)) ||
@@ -1030,6 +1077,122 @@ export default function App() {
     }
     return `Run custom ${datasetKind} stages`;
   }, [datasetKind, runForm.mode, runForm.stages, submitting]);
+  const summaryItems = useMemo(() => {
+    const items = [
+      {
+        title: "Tracked Jobs",
+        value: jobs.length,
+        subtitle: jobs.length ? "Persisted run history" : "No runs recorded yet",
+      },
+    ];
+
+    if (bestModel) {
+      items.unshift({
+        title: "Best F1 Macro",
+        value: formatScore(bestModel.f1_macro),
+        subtitle: bestModel.model_name,
+      });
+    }
+
+    if ((artifactEntries.plots_dir?.length || 0) + (artifactEntries.reports_dir?.length || 0) > 0) {
+      items.push({
+        title: "Plots & Reports",
+        value:
+          (artifactEntries.plots_dir?.length || 0) +
+          (artifactEntries.reports_dir?.length || 0),
+        subtitle: `${datasetKind} evaluation visuals and reports`,
+      });
+    }
+
+    if (summary?.artifacts?.models_dir) {
+      items.push({
+        title: "Models Dir",
+        value: (
+          <a className="stat-link" href="#artifact-models">
+            {summary.artifacts.models_dir.split("/").slice(-1)[0]}
+          </a>
+        ),
+      });
+    }
+
+    if (summary?.artifacts?.best_model) {
+      items.push({
+        title: "Best Model",
+        value: (
+          <a
+            className="stat-link"
+            href={fileUrl(summary.artifacts.best_model)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {summary.artifacts.best_model.split("/").slice(-1)[0]}
+          </a>
+        ),
+      });
+    }
+
+    if (summary?.evaluation_metrics?.models?.length) {
+      items.push({
+        title: "Eval Models",
+        value: summary.evaluation_metrics.models.length,
+        subtitle: datasetKind,
+      });
+    }
+
+    if (summary?.artifacts?.evaluation_metrics) {
+      items.push({
+        title: "Metrics File",
+        value: (
+          <a
+            className="stat-link"
+            href={fileUrl(summary.artifacts.evaluation_metrics)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {summary.artifacts.evaluation_metrics.split("/").slice(-1)[0]}
+          </a>
+        ),
+      });
+    }
+
+    return items;
+  }, [artifactEntries, bestModel, datasetKind, jobs.length, summary]);
+  const resultStageNote = useMemo(() => {
+    if (!selectedResultsJob || selectedResultsJob.mode !== "custom") {
+      return null;
+    }
+
+    if (datasetKind === "snapshot") {
+      if (resultCompletedStages.has("generate_snapshot") && !resultCompletedStages.has("train_snapshot")) {
+        return "Generated datasets are ready. Run train snapshot to create model artifacts.";
+      }
+      if (resultCompletedStages.has("train_snapshot") && !resultCompletedStages.has("evaluate_snapshot")) {
+        return "Training artifacts are ready. Run evaluate snapshot to see model metrics and plots.";
+      }
+      if (resultCompletedStages.has("evaluate_snapshot") && !resultCompletedStages.has("explain_snapshot")) {
+        return "Evaluation results are ready. Run explain snapshot to generate explainability outputs.";
+      }
+    }
+
+    if (datasetKind === "temporal") {
+      if (resultCompletedStages.has("generate_sequence") && !resultCompletedStages.has("build_temporal_features")) {
+        return "Sequence data is ready. Run build temporal features to prepare training data.";
+      }
+      if (resultCompletedStages.has("build_temporal_features") && !resultCompletedStages.has("train_temporal")) {
+        return "Temporal features are ready. Run train temporal to create model artifacts.";
+      }
+      if (resultCompletedStages.has("train_temporal") && !resultCompletedStages.has("evaluate_temporal")) {
+        return "Training artifacts are ready. Run evaluate temporal to see model metrics and plots.";
+      }
+      if (resultCompletedStages.has("evaluate_temporal") && !resultCompletedStages.has("explain_temporal")) {
+        return "Evaluation results are ready. Run explain temporal to generate explainability outputs.";
+      }
+    }
+
+    return null;
+  }, [datasetKind, resultCompletedStages, selectedResultsJob]);
+  const showModelEvaluation = modelRows.length > 0;
+  const showFeaturedResult = Boolean(featuredVisual);
 
   useEffect(() => {
     const previousMode = previousModeRef.current;
@@ -1433,73 +1596,25 @@ export default function App() {
           ) : (
             <div>
               <div className="card-band-top">
-                <div className="section-title">Latest Summary</div>
-                <SummaryList
-                  items={[
-                    ...headlineStats,
-                    {
-                      title: "Models Dir",
-                      value: summary?.artifacts?.models_dir ? (
-                        <a className="stat-link" href="#artifact-models">
-                          {summary.artifacts.models_dir.split("/").slice(-1)[0]}
-                        </a>
-                      ) : (
-                        "n/a"
-                      ),
-                    },
-                    {
-                      title: "Best Model",
-                      value: summary?.artifacts?.best_model ? (
-                        <a
-                          className="stat-link"
-                          href={fileUrl(summary.artifacts.best_model)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {summary.artifacts.best_model.split("/").slice(-1)[0]}
-                        </a>
-                      ) : (
-                        "n/a"
-                      ),
-                    },
-                    {
-                      title: "Eval Models",
-                      value: summary?.evaluation_metrics?.models?.length ?? 0,
-                      subtitle: datasetKind,
-                    },
-                    {
-                      title: "Metrics File",
-                      value: summary?.artifacts?.evaluation_metrics ? (
-                        <a
-                          className="stat-link"
-                          href={fileUrl(summary.artifacts.evaluation_metrics)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {
-                            summary.artifacts.evaluation_metrics
-                              .split("/")
-                              .slice(-1)[0]
-                          }
-                        </a>
-                      ) : (
-                        "n/a"
-                      ),
-                    },
-                  ]}
-                />
+                <div className="section-title">Latest Run Results</div>
+                <SummaryList items={summaryItems} />
+                {resultStageNote ? (
+                  <div className="stage-option-hint">{resultStageNote}</div>
+                ) : null}
               </div>
-              <div className="summary-feature evaluation-feature">
-                <div className="section-title section-title-compact">
-                  Model Evaluation
+              {showModelEvaluation ? (
+                <div className="summary-feature evaluation-feature">
+                  <div className="section-title section-title-compact">
+                    Model Evaluation
+                  </div>
+                  <MetricTable rows={modelRows} />
                 </div>
-                <MetricTable rows={modelRows} />
-              </div>
-              <div className="summary-feature featured-result-feature">
-                <div className="section-title section-title-compact">
-                  Featured Result
-                </div>
-                {featuredVisual ? (
+              ) : null}
+              {showFeaturedResult ? (
+                <div className="summary-feature featured-result-feature">
+                  <div className="section-title section-title-compact">
+                    Featured Result
+                  </div>
                   <figure className="featured-visual">
                     <a
                       className="featured-visual-link"
@@ -1525,14 +1640,8 @@ export default function App() {
                       <div className="visual-title">{featuredVisual.title}</div>
                     </figcaption>
                   </figure>
-                ) : (
-                  <div className="empty-state">
-                    Run a pipeline to surface confusion matrices, model
-                    comparison plots, feature-importance visuals, and
-                    explainability outputs here.
-                  </div>
-                )}
-              </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>
