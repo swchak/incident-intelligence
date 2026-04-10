@@ -285,7 +285,7 @@ describe("App", () => {
     expect(await screen.findAllByText("train_snapshot")).not.toHaveLength(0);
 
     fireEvent.click(screen.getByRole("button", { name: /^custom$/i }));
-    expect(screen.getByLabelText(/models/i)).toBeDisabled();
+    expect(checkboxFor(/logistic regression/i)).toBeDisabled();
     expect(screen.getByLabelText(/scoring/i)).toBeDisabled();
     fireEvent.click(
       screen.getByRole("button", { name: /run generate snapshot/i }),
@@ -437,7 +437,8 @@ describe("App", () => {
     expect(await screen.findByText("Full Pipeline Runs")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("job-cust").closest("button"));
-    expect(screen.getByDisplayValue("logistic,rf")).not.toBeDisabled();
+    expect(checkboxFor(/logistic regression/i)).not.toBeDisabled();
+    expect(checkboxFor(/random forest/i)).toBeChecked();
     expect(screen.getByRole("button", { name: /^custom$/i })).toHaveClass("active");
     expect(screen.getByLabelText(/generate_snapshot/i)).toBeDisabled();
     expect(
@@ -1666,7 +1667,7 @@ describe("App", () => {
       const nextStageCheckbox = checkboxFor(/train_temporal/i);
       expect(nextStageCheckbox).toBeChecked();
       expect(nextStageCheckbox).toBeDisabled();
-      expect(screen.getByLabelText(/models/i)).toBeDisabled();
+      expect(checkboxFor(/logistic regression/i)).toBeDisabled();
       expect(screen.getByLabelText(/scoring/i)).toBeDisabled();
       expect(
         screen.getByRole("button", { name: /run train temporal/i }),

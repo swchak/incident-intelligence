@@ -17,6 +17,21 @@ const STAGE_OPTIONS = {
     "explain_temporal",
   ],
 };
+const MODEL_OPTIONS = [
+  { value: "logistic", label: "Logistic Regression" },
+  { value: "rf", label: "Random Forest" },
+  { value: "gb", label: "Gradient Boosting" },
+  { value: "svm", label: "SVM (RBF)" },
+];
+const SCORING_OPTIONS = [
+  { value: "f1_macro", label: "F1 Macro" },
+  { value: "accuracy", label: "Accuracy" },
+  { value: "precision_macro", label: "Precision Macro" },
+  { value: "recall_macro", label: "Recall Macro" },
+  { value: "f1_weighted", label: "F1 Weighted" },
+  { value: "precision_weighted", label: "Precision Weighted" },
+  { value: "recall_weighted", label: "Recall Weighted" },
+];
 
 async function fetchJson(path, options) {
   const response = await fetch(`${API_BASE_URL}${path}`, options);
@@ -46,6 +61,16 @@ function fileUrl(path, version = "") {
 
 function humanizeStageName(stageName) {
   return stageName.replace(/_/g, " ");
+}
+
+function stageSummaryLabel(stageName, datasetKind) {
+  if (!stageName) {
+    return "No stages yet";
+  }
+  const suffix = `_${datasetKind}`;
+  const trimmed =
+    stageName.endsWith(suffix) ? stageName.slice(0, -suffix.length) : stageName;
+  return humanizeStageName(trimmed);
 }
 
 function shortRunId(jobId) {
@@ -86,11 +111,11 @@ function formatJobTime(timestamp) {
 function lastStageLabel(job) {
   const stages = Array.isArray(job.stages) ? job.stages : [];
   if (job.current_stage_name) {
-    return humanizeStageName(job.current_stage_name);
+    return stageSummaryLabel(job.current_stage_name, job.dataset_kind);
   }
   if (stages.length) {
     const ordered = [...stages].sort((left, right) => left.stage_order - right.stage_order);
-    return humanizeStageName(ordered[ordered.length - 1].stage_name);
+    return stageSummaryLabel(ordered[ordered.length - 1].stage_name, job.dataset_kind);
   }
   return "No stages yet";
 }
@@ -387,6 +412,7 @@ function JobList({
               <span>Kind</span>
               <span>Run ID</span>
               <span>Last Stage</span>
+              <span className="job-toggle-header">View</span>
             </div>
             <span>Action</span>
           </div>
@@ -414,11 +440,9 @@ function JobList({
                       <span className={`status-chip ${job.status}`}>{job.status}</span>
                       <span className="job-kind">{job.dataset_kind}</span>
                       <span className="job-run-id">{shortRunId(job.job_id)}</span>
-                      <span className="job-last-stage">
-                        <span>{lastStageLabel(job)}</span>
-                        <span className="job-toggle-indicator" aria-hidden="true">
-                          {isExpanded ? "Collapse ▴" : "Details ▾"}
-                        </span>
+                      <span className="job-last-stage">{lastStageLabel(job)}</span>
+                      <span className="job-toggle-indicator" aria-hidden="true">
+                        {isExpanded ? "Collapse ▴" : "Details ▾"}
                       </span>
                     </div>
                   </button>
@@ -541,13 +565,15 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [assetVersion, setAssetVersion] = useState("");
+  const [scoringMenuOpen, setScoringMenuOpen] = useState(false);
   const lastCompletedJobRef = useRef("");
   const previousModeRef = useRef("full");
+  const scoringMenuRef = useRef(null);
   const [runForm, setRunForm] = useState({
     mode: "full",
     stages: STAGE_OPTIONS.snapshot,
     fast_mode: false,
-    models: "logistic,rf",
+    models: ["logistic", "rf"],
     cv: datasetKind === "temporal" ? "3" : "",
     n_jobs: "1",
     verbose: "0",
@@ -765,12 +791,7 @@ export default function App() {
             : null,
         force_new_run: nextMode === "custom" && forceNewCustomRun,
         fast_mode: runForm.fast_mode,
-        models: runForm.models
-          ? runForm.models
-              .split(",")
-              .map((item) => item.trim())
-              .filter(Boolean)
-          : null,
+        models: runForm.models.length ? runForm.models : null,
         cv: runForm.cv ? Number(runForm.cv) : null,
         n_jobs: runForm.n_jobs ? Number(runForm.n_jobs) : null,
         verbose: runForm.verbose ? Number(runForm.verbose) : null,
@@ -1251,6 +1272,23 @@ export default function App() {
     });
   }, [forceNewCustomRun, nextRunnableStage, runForm.mode]);
 
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!scoringMenuRef.current?.contains(event.target)) {
+        setScoringMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    if (!tuningEnabled) {
+      setScoringMenuOpen(false);
+    }
+  }, [tuningEnabled]);
+
   return (
     <div className="app-shell">
       <section className="hero-shell">
@@ -1431,20 +1469,34 @@ export default function App() {
                   </div>
                   <div className="run-form-fields">
                     <div className="tuning-inline-grid">
-                      <label className="compact-field compact-field-wide">
+                      <div className="compact-field compact-field-wide compact-model-field">
                         <span className="form-label">Models</span>
-                        <input
-                          value={runForm.models}
-                          disabled={!tuningEnabled}
-                          onChange={(event) =>
-                            setRunForm((current) => ({
-                              ...current,
-                              models: event.target.value,
-                            }))
-                          }
-                          placeholder="logistic,rf"
-                        />
-                      </label>
+                        <div className="model-options">
+                          {MODEL_OPTIONS.map((modelOption) => (
+                            <label
+                              key={modelOption.value}
+                              className="model-option"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={runForm.models.includes(modelOption.value)}
+                                disabled={!tuningEnabled}
+                                onChange={(event) =>
+                                  setRunForm((current) => ({
+                                    ...current,
+                                    models: event.target.checked
+                                      ? [...current.models, modelOption.value]
+                                      : current.models.filter(
+                                          (model) => model !== modelOption.value,
+                                        ),
+                                  }))
+                                }
+                              />
+                              <span>{modelOption.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                       <label className="compact-field">
                         <span className="form-label">CV</span>
                         <input
@@ -1489,17 +1541,59 @@ export default function App() {
                       </label>
                       <label className="compact-field compact-field-wide">
                         <span className="form-label">Scoring</span>
-                        <input
-                          value={runForm.scoring}
-                          disabled={!tuningEnabled}
-                          onChange={(event) =>
-                            setRunForm((current) => ({
-                              ...current,
-                              scoring: event.target.value,
-                            }))
-                          }
-                          placeholder="f1_macro"
-                        />
+                        <div className="compact-field-stack">
+                          <div
+                            className={`custom-select ${scoringMenuOpen ? "open" : ""} ${
+                              tuningEnabled ? "" : "disabled"
+                            }`}
+                            ref={scoringMenuRef}
+                          >
+                            <button
+                              type="button"
+                              className="custom-select-trigger"
+                              disabled={!tuningEnabled}
+                              aria-haspopup="listbox"
+                              aria-expanded={scoringMenuOpen}
+                              onClick={() => setScoringMenuOpen((current) => !current)}
+                            >
+                              <span>
+                                {SCORING_OPTIONS.find(
+                                  (option) => option.value === runForm.scoring,
+                                )?.label || runForm.scoring}
+                              </span>
+                              <span className="custom-select-caret" aria-hidden="true">
+                                ▾
+                              </span>
+                            </button>
+                            {scoringMenuOpen ? (
+                              <div className="custom-select-menu" role="listbox" aria-label="Scoring">
+                                {SCORING_OPTIONS.map((option) => (
+                                  <button
+                                    key={option.value}
+                                    type="button"
+                                    role="option"
+                                    className={`custom-select-option ${
+                                      option.value === runForm.scoring ? "selected" : ""
+                                    }`}
+                                    aria-selected={option.value === runForm.scoring}
+                                    onClick={() => {
+                                      setRunForm((current) => ({
+                                        ...current,
+                                        scoring: option.value,
+                                      }));
+                                      setScoringMenuOpen(false);
+                                    }}
+                                  >
+                                    {option.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <span className="field-helper-text">
+                            Used for cross-validation tuning only.
+                          </span>
+                        </div>
                       </label>
                       <label className="compact-field compact-checkbox-field">
                         <span className="form-label">Fast mode</span>

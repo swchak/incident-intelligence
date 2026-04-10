@@ -306,6 +306,78 @@ input {
   width: 100%;
 }
 
+.compact-field-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-helper-text {
+  color: #6b7892;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.custom-select {
+  display: grid;
+  gap: 8px;
+}
+
+.custom-select.disabled {
+  opacity: 0.55;
+}
+
+.custom-select-trigger {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(20, 33, 61, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  color: #14213d;
+  font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
+.custom-select-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.custom-select-caret {
+  color: #6b7892;
+  flex: 0 0 auto;
+}
+
+.custom-select-menu {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(20, 33, 61, 0.1);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 30px rgba(20, 33, 61, 0.08);
+}
+
+.custom-select-option {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #2b3a56;
+  font: inherit;
+  text-align: left;
+}
+
+.custom-select-option:hover,
+.custom-select-option.selected {
+  background: rgba(42, 123, 114, 0.12);
+  color: #153a35;
+}
+
 .compact-field input:disabled,
 .compact-checkbox-field input:disabled {
   opacity: 0.55;
@@ -314,6 +386,39 @@ input {
 
 .compact-field-wide {
   min-width: 0;
+}
+
+.compact-model-field {
+  align-items: start;
+}
+
+.model-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  min-width: 0;
+  align-items: start;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #2b3a56;
+  font-size: 0.94rem;
+  white-space: nowrap;
+  justify-self: start;
+}
+
+.model-option input {
+  width: auto;
+  margin: 0;
+}
+
+.compact-model-field .model-option:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .compact-checkbox-field {
@@ -702,6 +807,7 @@ th {
 }
 
 .job-list {
+  --job-main-columns: 96px 96px 110px minmax(140px, 1fr) 84px;
   display: grid;
   gap: 6px;
 }
@@ -739,8 +845,9 @@ th {
 
 .job-list-header-main {
   display: grid;
-  grid-template-columns: 96px 96px 110px minmax(180px, 1fr);
+  grid-template-columns: var(--job-main-columns);
   gap: 10px;
+  align-items: center;
 }
 
 .job-item {
@@ -761,14 +868,20 @@ th {
 .job-select {
   display: block;
   min-width: 0;
+  width: 100%;
 }
 
 .job-primary-row {
   display: grid;
-  grid-template-columns: 96px 96px 110px minmax(180px, 1fr);
+  grid-template-columns: var(--job-main-columns);
   gap: 10px;
   width: 100%;
   align-items: center;
+}
+
+.job-list-header-main > span,
+.job-primary-row > span {
+  justify-self: start;
 }
 
 .job-list-header > span:last-child {
@@ -799,13 +912,11 @@ th {
 }
 
 .job-last-stage {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
   color: #22314f;
   font-size: 0.84rem;
   font-weight: 600;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .job-toggle-indicator {
@@ -813,6 +924,11 @@ th {
   font-size: 0.76rem;
   font-weight: 700;
   white-space: nowrap;
+  justify-self: start;
+}
+
+.job-toggle-header {
+  color: inherit;
 }
 
 .job-kind {
