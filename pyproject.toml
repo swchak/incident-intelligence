@@ -7,6 +7,7 @@ name = "incident-intelligence"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
+  "chromadb>=1.0.0",
   "fastapi>=0.100.0",
   "joblib>=1.3.0",
   "matplotlib>=3.7.0",
@@ -14,6 +15,7 @@ dependencies = [
   "pandas>=2.0.0",
   "scikit-learn>=1.3.0",
   "scipy>=1.10.0",
+  "sentence-transformers>=3.0.0",
   "seaborn>=0.12.0",
   "shap>=0.41.0",
   "sqlalchemy>=2.0.0",
@@ -41,6 +43,11 @@ incident-train = "incident_intelligence.cli.train:main"
 incident-evaluate = "incident_intelligence.cli.evaluate:main"
 incident-explain = "incident_intelligence.cli.explain:main"
 incident-explain-local = "incident_intelligence.cli.explain_local:main"
+incident-generate-knowledge-base = "incident_intelligence.cli.generate_knowledge_base:main"
+incident-build-rag-index = "incident_intelligence.cli.build_rag_index:main"
+incident-query-rag = "incident_intelligence.cli.query_rag:main"
+incident-rag-diagnose = "incident_intelligence.cli.diagnose_rag:main"
+incident-evaluate-rag = "incident_intelligence.cli.evaluate_rag:main"
 incident-pipeline = "incident_intelligence.cli.pipeline:main"
 incident-api = "incident_intelligence.api.app:main"
 
@@ -117,3 +124,25 @@ n_examples = 3
 top_k_classes = 3
 top_features_per_class = 8
 model = "artifacts/models/best_model.joblib"
+
+[tool.incident_intelligence.knowledge_base]
+input_path = "data/raw/incidents_sequence_raw.csv"
+output_dir = "data/knowledge_base/generated"
+max_postmortems = 6
+random_seed = 42
+
+[tool.incident_intelligence.rag_index]
+input_dir = "data/knowledge_base"
+output_dir = "artifacts/rag"
+collection_name = "incident_knowledge_base"
+model_name = "sentence-transformers/all-MiniLM-L6-v2"
+chunk_size = 900
+chunk_overlap = 120
+
+[tool.incident_intelligence.rag_answer]
+mode = "template"
+max_evidence = 3
+
+[tool.incident_intelligence.rag_evaluate]
+top_k = 5
+max_incidents = 100

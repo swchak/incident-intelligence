@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from incident_intelligence.api.app import (
     PipelineRun,
     PipelineRunRequest,
+    RagSearchRequest,
     PipelineStage,
     _build_stages,
     _run_pipeline_job,
@@ -18,9 +19,14 @@ from incident_intelligence.api.app import (
     cancel_pipeline_job,
     dashboard_summary,
     delete_pipeline_job,
+    build_knowledge_base_index,
+    diagnose_rag,
+    generate_knowledge_base_docs,
+    knowledge_base_status,
     get_pipeline_job_log,
     get_project_file,
     health,
+    search_rag,
     run_pipeline,
 )
 
@@ -106,6 +112,182 @@ class DashboardApiTests(unittest.TestCase):
             body["artifacts"]["best_model"][0]["path"],
             "/tmp/models/best_model.joblib",
         )
+
+    @patch("incident_intelligence.api.app.retrieve_similar_documents")
+    @patch("incident_intelligence.api.app.load_config")
+    @patch("incident_intelligence.api.app._resolve_project_path")
+    def test_query_rag_endpoint(
+        self,
+        resolve_project_path_mock,
+        load_config_mock,
+        retrieve_similar_documents_mock,
+    ) -> None:
+        rag_root = Path("/tmp/rag")
+        chroma_dir = rag_root / "chroma"
+        manifest_path = rag_root / "documents_manifest.json"
+        resolve_project_path_mock.return_value = rag_root
+        load_config_mock.return_value = type(
+            "Cfg",
+            (),
+            {
+                "input_dir": "data/knowledge_base",
+                "output_dir": "artifacts/rag",
+                "collection_name": "incident_knowledge_base",
+                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "chunk_size": 900,
+                "chunk_overlap": 120,
+                "mode": "template",
+                "max_evidence": 3,
+            },
+        )()
+        retrieve_similar_documents_mock.return_value = [
+            {
+                "document": "Memory usage increased steadily before OOM.",
+                "metadata": {
+                    "source_path": "incidents/INC-1001.md",
+                    "doc_type": "incidents",
+                    "title": "Incident INC-1001",
+                },
+                "distance": 0.12,
+            }
+        ]
+
+        with patch("pathlib.Path.exists", new=lambda path: path in {chroma_dir, manifest_path}):
+            body = search_rag(RagSearchRequest(query="memory leak symptoms", top_k=3))
+
+        self.assertEqual(body["query"], "memory leak symptoms")
+        self.assertEqual(body["n_results"], 1)
+        self.assertEqual(body["matches"][0]["metadata"]["source_path"], "incidents/INC-1001.md")
+        self.assertEqual(body["answer"]["answer_mode"], "template")
+        self.assertEqual(body["answer"]["predicted_root_cause"], "memory_leak")
+        self.assertIn("Memory usage increased steadily", body["grounded_context"])
+
+    @patch("incident_intelligence.api.app.load_config")
+    @patch("incident_intelligence.api.app._resolve_project_path")
+    def test_query_rag_endpoint_requires_built_index(
+        self,
+        resolve_project_path_mock,
+        load_config_mock,
+    ) -> None:
+        resolve_project_path_mock.return_value = Path("/tmp/rag")
+        load_config_mock.return_value = type(
+            "Cfg",
+            (),
+            {
+                "input_dir": "data/knowledge_base",
+                "output_dir": "artifacts/rag",
+                "collection_name": "incident_knowledge_base",
+                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "chunk_size": 900,
+                "chunk_overlap": 120,
+                "mode": "template",
+                "max_evidence": 3,
+            },
+        )()
+
+        with self.assertRaises(HTTPException) as context:
+            search_rag(RagSearchRequest(query="memory leak symptoms", top_k=3))
+
+        self.assertEqual(context.exception.status_code, 404)
+
+    @patch("incident_intelligence.api.app._get_job_for_knowledge_workflow")
+    @patch("incident_intelligence.api.app._launch_knowledge_task")
+    def test_generate_knowledge_base_docs_endpoint(
+        self,
+        launch_knowledge_task_mock,
+        get_job_for_knowledge_workflow_mock,
+    ) -> None:
+        launch_knowledge_task_mock.return_value = type(
+            "Task",
+            (),
+            {
+                "action": "generate",
+                "status": "running",
+                "message": "KB document generation is running.",
+                "started_at": "2026-05-20T00:00:00+00:00",
+                "finished_at": None,
+                "detail": {},
+                "error": None,
+            },
+        )()
+
+        body = generate_knowledge_base_docs(job_id="job-123")
+
+        self.assertEqual(body["status"], "running")
+        self.assertEqual(body["task"]["action"], "generate")
+        get_job_for_knowledge_workflow_mock.assert_called_once_with("job-123")
+        launch_knowledge_task_mock.assert_called_once_with("generate", "job-123")
+
+    @patch("incident_intelligence.api.app._get_job_for_knowledge_workflow")
+    @patch("incident_intelligence.api.app._launch_knowledge_task")
+    def test_build_knowledge_base_index_endpoint(
+        self,
+        launch_knowledge_task_mock,
+        get_job_for_knowledge_workflow_mock,
+    ) -> None:
+        launch_knowledge_task_mock.return_value = type(
+            "Task",
+            (),
+            {
+                "action": "index",
+                "status": "running",
+                "message": "RAG index build is running.",
+                "started_at": "2026-05-20T00:00:00+00:00",
+                "finished_at": None,
+                "detail": {},
+                "error": None,
+            },
+        )()
+
+        body = build_knowledge_base_index(job_id="job-123")
+
+        self.assertEqual(body["status"], "running")
+        self.assertEqual(body["task"]["action"], "index")
+        get_job_for_knowledge_workflow_mock.assert_called_once_with("job-123")
+        launch_knowledge_task_mock.assert_called_once_with("index", "job-123")
+
+    def test_knowledge_base_status_endpoint(self) -> None:
+        body = knowledge_base_status()
+
+        self.assertIn("tasks", body)
+        self.assertIn("generate", body["tasks"])
+        self.assertIn("index", body["tasks"])
+
+    @patch("incident_intelligence.api.app.load_config")
+    def test_diagnose_rag_endpoint(
+        self,
+        load_config_mock,
+    ) -> None:
+        with TemporaryDirectory() as temp_dir:
+            rag_root = Path(temp_dir)
+            chroma_dir = rag_root / "chroma"
+            chroma_dir.mkdir(parents=True)
+            manifest_path = rag_root / "documents_manifest.json"
+            manifest_path.write_text(
+                '{"n_documents": 42, "collection_name": "incident_knowledge_base"}',
+                encoding="utf-8",
+            )
+
+            load_config_mock.return_value = type(
+                "Cfg",
+                (),
+                {
+                    "input_dir": str(rag_root / "kb"),
+                    "output_dir": str(rag_root),
+                    "collection_name": "incident_knowledge_base",
+                    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                    "chunk_size": 900,
+                    "chunk_overlap": 120,
+                },
+            )()
+
+            body = diagnose_rag()
+
+        self.assertTrue(body["index_exists"])
+        self.assertEqual(body["rag"]["n_documents"], 42)
+        self.assertEqual(body["rag"]["collection_name"], "incident_knowledge_base")
+        self.assertTrue(body["rag"]["chroma_exists"])
+        self.assertTrue(body["rag"]["manifest_exists"])
 
     @patch("incident_intelligence.api.app.threading.Thread")
     @patch("incident_intelligence.api.app._save_jobs")

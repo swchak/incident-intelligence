@@ -92,11 +92,19 @@ The biggest practical lessons from this project were:
 
 ## Visual Walkthrough
 
-Architecture and workflow:
+System overview:
 
-![Synthetic incident pipeline](docs/images/synthetic_incident_pipeline.png)
+![Incident root cause analysis ML pipeline](docs/images/ML-pipeline-RCA.png)
 
-Sample evaluation and explainability outputs:
+Model training and selection workflow:
+
+![Modeling pipeline](docs/images/modeling_pipeline.png)
+
+Evaluation workflow:
+
+![Model evaluation pipeline](docs/images/model_evaluation_pipeline.png)
+
+Sample outputs:
 
 ![Confusion matrix example](docs/images/confusion_matrix.png)
 
@@ -121,6 +129,10 @@ It then trains baseline classifiers to predict a synthetic `root_cause_label` su
 - `cpu_saturation`
 - `traffic_spike`
 - `normal`
+
+It also now supports generating a small synthetic text knowledge base aligned to
+those labels, including incident notes, runbooks, and postmortem-style
+documents that can be used later for retrieval or RAG-style extensions.
 
 ## Current Workflows
 
@@ -179,8 +191,135 @@ The installed CLI entrypoints are defined in [pyproject.toml](/Users/swethachakr
 | `incident-evaluate` | Evaluate saved models |
 | `incident-explain` | Generate global explainability artifacts |
 | `incident-explain-local` | Generate local explainability artifacts for selected incidents |
+| `incident-generate-knowledge-base` | Generate synthetic incident markdown, runbooks, and postmortems |
+| `incident-build-rag-index` | Build a local Chroma vector index over the knowledge base |
+| `incident-query-rag` | Query the local knowledge-base vector index |
+| `incident-rag-diagnose` | Inspect local RAG index health, manifest details, and embedding config |
+| `incident-evaluate-rag` | Evaluate retrieval quality over incident knowledge-base documents |
 | `incident-pipeline` | Run the full snapshot or temporal workflow |
 | `incident-api` | Run the dashboard backend API |
+
+## Synthetic Knowledge Base
+
+The repository now includes a small synthetic knowledge-base starter set under:
+
+```text
+data/knowledge_base/
+```
+
+and a generator for producing additional markdown artifacts from existing
+incident telemetry and labels:
+
+```bash
+incident-generate-knowledge-base
+```
+
+By default, it reads the temporal sequence dataset at:
+
+```text
+data/raw/incidents_sequence_raw.csv
+```
+
+and writes generated markdown files under:
+
+```text
+data/knowledge_base/generated/
+```
+
+The generated structure includes:
+
+- `incidents/`: one incident narrative per generated incident
+- `runbooks/`: one runbook per observed root-cause label
+- `postmortems/`: one postmortem per selected incident
+
+## Vector Index For Retrieval
+
+The repository now includes a first-pass retrieval layer under:
+
+```text
+src/incident_intelligence/rag/
+```
+
+This module supports:
+
+- loading markdown knowledge-base documents
+- chunking them into retrieval-friendly passages
+- embedding them with `sentence-transformers`
+- storing vectors in a local Chroma index
+
+You can build the local vector index with:
+
+```bash
+incident-build-rag-index
+```
+
+or:
+
+```bash
+make rag-index
+```
+
+By default, this writes artifacts under:
+
+```text
+artifacts/rag/
+  chroma/
+  documents_manifest.json
+```
+
+After the index is built, you can run a simple retrieval query with:
+
+```bash
+incident-query-rag "memory leak symptoms and OOM logs"
+```
+
+or:
+
+```bash
+make rag-query RAG_QUERY="dependency outage retries and latency"
+```
+
+You can also inspect index health directly from the CLI:
+
+```bash
+incident-rag-diagnose
+```
+
+or:
+
+```bash
+make rag-diagnose
+```
+
+And you can run a deterministic retrieval evaluation over incident docs with:
+
+```bash
+incident-evaluate-rag
+```
+
+or:
+
+```bash
+make evaluate-rag
+```
+
+The dashboard/API also exposes RAG endpoints for app-driven workflows:
+
+- `POST /api/rag/index`
+- `POST /api/rag/search`
+- `GET /api/rag/diagnose`
+
+The first answer layer is intentionally LLM-optional. `POST /api/rag/search` now returns:
+
+- raw retrieval matches
+- grounded context
+- a deterministic template answer with:
+  - predicted root cause
+  - confidence
+  - retrieved evidence
+  - suggested next steps
+
+This keeps the initial RAG workflow reproducible and testable without requiring external model-provider API keys.
 
 ## Dashboard App
 

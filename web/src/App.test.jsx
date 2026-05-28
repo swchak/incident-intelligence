@@ -5,6 +5,11 @@ import App from "./App";
 describe("App", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    globalThis.IntersectionObserver = class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    };
   });
 
   function checkboxFor(labelPattern) {
@@ -85,6 +90,38 @@ describe("App", () => {
         );
       }
 
+      if (url.endsWith("/api/knowledge-base/status")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              tasks: {
+                generate: { action: "generate", status: "idle" },
+                index: { action: "index", status: "idle" },
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/rag/diagnose")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              index_exists: false,
+              index_task: { action: "index", status: "idle" },
+              rag: {
+                collection_name: "incident_knowledge_base",
+                model_name: "sentence-transformers/all-MiniLM-L6-v2",
+                n_documents: 0,
+                chroma_dir: "/tmp/rag/chroma",
+                manifest_path: "/tmp/rag/documents_manifest.json",
+                manifest_exists: false,
+              },
+            }),
+          ),
+        );
+      }
+
       return Promise.reject(new Error(`Unhandled fetch: ${url}`));
     });
 
@@ -95,15 +132,391 @@ describe("App", () => {
         name: /Incident root cause modeling - from synthetic telemetry and temporal features to explainable root-cause results\./i,
       }),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Run Pipeline")).toBeInTheDocument();
-    expect(await screen.findByText("Latest Run Results")).toBeInTheDocument();
-    expect(await screen.findByText("Recent Jobs")).toBeInTheDocument();
-    expect(await screen.findByText("Selected Job Log")).toBeInTheDocument();
-    expect(await screen.findByText("Evaluation & Explainability Visuals")).toBeInTheDocument();
-    expect(await screen.findByText("Artifact Inventory")).toBeInTheDocument();
+    expect(await screen.findAllByText("Run Pipeline")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Latest Run Results")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Recent Jobs")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Selected Job Log")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Visuals")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Artifact Inventory")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Knowledge Base")).not.toHaveLength(0);
+    expect(await screen.findByText("Index Diagnostics")).toBeInTheDocument();
     fireEvent.click(screen.getByText("legacy-j").closest("button"));
     expect(await screen.findByText("0/0 stages")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /delete job legacy-job-1/i })).toBeInTheDocument();
+  });
+
+  it("queries the knowledge base and renders retrieval matches", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.includes("/api/dashboard/summary/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              evaluation_metrics: { models: [] },
+              artifacts: {
+                models_dir: "artifacts/models",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                job_id: "job-1",
+                dataset_kind: "snapshot",
+                mode: "full",
+                requested_stages: [
+                  "generate_snapshot",
+                  "train_snapshot",
+                  "evaluate_snapshot",
+                  "explain_snapshot",
+                ],
+                status: "completed",
+                created_at: "2026-05-20T00:00:00+00:00",
+                finished_at: "2026-05-20T00:05:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-1.log",
+                stages: [
+                  {
+                    stage_id: "job-1:generate_snapshot",
+                    stage_name: "generate_snapshot",
+                    stage_order: 0,
+                    status: "completed",
+                    command: [],
+                    log_path: "artifacts/api_runs/job-1/01_generate.log",
+                  },
+                ],
+              },
+            ]),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-1/log")) {
+        return Promise.resolve(new Response(JSON.stringify({ log: "job log" })));
+      }
+
+      if (url.endsWith("/api/knowledge-base/status")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              tasks: {
+                generate: { action: "generate", status: "idle" },
+                index: { action: "index", status: "idle" },
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/rag/diagnose")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              index_exists: true,
+              index_task: { action: "index", status: "completed" },
+              rag: {
+                job_id: "job-1",
+                collection_name: "incident_knowledge_base",
+                model_name: "sentence-transformers/all-MiniLM-L6-v2",
+                n_documents: 12,
+                knowledge_base_dir: "/tmp/kb/job-1",
+                chroma_dir: "/tmp/rag/chroma",
+                manifest_path: "/tmp/rag/documents_manifest.json",
+                manifest_exists: true,
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/knowledge-base/generate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "ok",
+              message: "Knowledge-base documents generated.",
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/rag/index")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "ok",
+              message: "RAG index built successfully.",
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/rag/search")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              query: "memory leak",
+              n_results: 1,
+              matches: [
+                {
+                  document: "Memory usage increased steadily before OOM.",
+                  metadata: {
+                    source_path: "incidents/INC-1001.md",
+                    doc_type: "incidents",
+                    title: "Incident INC-1001",
+                  },
+                  distance: 0.12,
+                },
+              ],
+              grounded_context: "Source: incidents/INC-1001.md\nMemory usage increased steadily before OOM.",
+            }),
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+
+    render(<App />);
+
+    const knowledgeSearchJobRow = await screen.findByText("job-1");
+    fireEvent.click(knowledgeSearchJobRow.closest("button"));
+    fireEvent.change(await screen.findByLabelText(/search query/i), {
+      target: { value: "memory leak" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /search knowledge base/i }));
+
+    expect(await screen.findByText("Incident INC-1001")).toBeInTheDocument();
+    expect(await screen.findByText("incidents/INC-1001.md")).toBeInTheDocument();
+    expect(await screen.findAllByText(/Memory usage increased steadily before OOM\./i)).not.toHaveLength(0);
+    expect(await screen.findByText("Grounded Context")).toBeInTheDocument();
+    expect(await screen.findByText(/Search completed for "memory leak"/i)).toBeInTheDocument();
+  });
+
+  it("can generate KB docs and build the RAG index from the dashboard", async () => {
+    let statusCallCount = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.includes("/api/dashboard/summary/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              evaluation_metrics: { models: [] },
+              artifacts: { models_dir: "artifacts/models" },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/artifacts/snapshot")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              dataset_kind: "snapshot",
+              artifacts: {
+                models_dir: [],
+                train_metrics: [],
+                plots_dir: [],
+                reports_dir: [],
+                explain_dir: [],
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                job_id: "job-1",
+                dataset_kind: "snapshot",
+                mode: "full",
+                requested_stages: [
+                  "generate_snapshot",
+                  "train_snapshot",
+                  "evaluate_snapshot",
+                  "explain_snapshot",
+                ],
+                status: "completed",
+                created_at: "2026-05-20T00:00:00+00:00",
+                finished_at: "2026-05-20T00:05:00+00:00",
+                current_stage_name: null,
+                log_path: "artifacts/api_runs/job-1.log",
+                stages: [
+                  {
+                    stage_id: "job-1:generate_snapshot",
+                    stage_name: "generate_snapshot",
+                    stage_order: 0,
+                    status: "completed",
+                    command: [],
+                    log_path: "artifacts/api_runs/job-1/01_generate.log",
+                  },
+                ],
+              },
+            ]),
+          ),
+        );
+      }
+
+      if (url.endsWith("/api/pipeline/jobs/job-1/log")) {
+        return Promise.resolve(new Response(JSON.stringify({ log: "job log" })));
+      }
+
+      if (url.endsWith("/api/knowledge-base/status")) {
+        statusCallCount += 1;
+        if (statusCallCount === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                tasks: {
+                  generate: { action: "generate", status: "idle" },
+                  index: { action: "index", status: "idle" },
+                },
+              }),
+            ),
+          );
+        }
+        if (statusCallCount === 2) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                tasks: {
+                  generate: {
+                    action: "generate",
+                    status: "completed",
+                    message: "Knowledge-base documents generated.",
+                    detail: { n_incident_docs: 5 },
+                  },
+                  index: { action: "index", status: "idle" },
+                },
+              }),
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              tasks: {
+                generate: {
+                  action: "generate",
+                  status: "completed",
+                  message: "Knowledge-base documents generated.",
+                  detail: { n_incident_docs: 5 },
+                },
+                index: {
+                  action: "index",
+                  status: "completed",
+                  message: "RAG index built successfully.",
+                  detail: { n_documents: 42 },
+                },
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/rag/diagnose")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              index_exists: true,
+              index_task: { action: "index", status: "completed" },
+              rag: {
+                job_id: "job-1",
+                collection_name: "incident_knowledge_base",
+                model_name: "sentence-transformers/all-MiniLM-L6-v2",
+                n_documents: 42,
+                knowledge_base_dir: "/tmp/kb/job-1",
+                chroma_dir: "/tmp/rag/chroma",
+                manifest_path: "/tmp/rag/documents_manifest.json",
+                manifest_exists: true,
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/knowledge-base/generate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "running",
+              message: "KB document generation is running.",
+              task: {
+                action: "generate",
+                status: "running",
+                message: "KB document generation is running.",
+              },
+            }),
+          ),
+        );
+      }
+
+      if (url.includes("/api/rag/index")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "running",
+              message: "RAG index build is running.",
+              task: {
+                action: "index",
+                status: "running",
+                message: "RAG index build is running.",
+              },
+            }),
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
+    });
+
+    render(<App />);
+
+    const knowledgeActionJobRow = await screen.findByText("job-1");
+    fireEvent.click(knowledgeActionJobRow.closest("button"));
+    fireEvent.click(await screen.findByRole("button", { name: /generate kb docs/i }));
+    expect(await screen.findByText("Knowledge-base documents generated.")).toBeInTheDocument();
+    expect(await screen.findByText(/Finished KB document generation/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /build rag index/i }));
+    expect(await screen.findByText("RAG index built successfully.")).toBeInTheDocument();
+    expect(await screen.findByText(/Finished RAG index build/i)).toBeInTheDocument();
+
+      expect(
+        fetchMock.mock.calls.filter(([url]) =>
+          String(url).includes("/api/knowledge-base/generate") ||
+          String(url).includes("/api/rag/index"),
+        ).length,
+      ).toBe(2);
   });
 
   it("disables tuning fields for custom generate-only runs", async () => {

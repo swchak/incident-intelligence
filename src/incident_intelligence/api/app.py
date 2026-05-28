@@ -22,10 +22,21 @@ import uvicorn
 from incident_intelligence.config import (
     EvaluateCLIConfig,
     ExplainCLIConfig,
+    KnowledgeBaseCLIConfig,
+    RagAnswerCLIConfig,
+    RagIndexCLIConfig,
     TrainCLIConfig,
     load_config,
 )
+from incident_intelligence.data.generate_knowledge_base import (
+    KnowledgeBaseGeneratorConfig,
+    generate_knowledge_base,
+)
 from incident_intelligence.modeling.train import with_dataset_suffix, with_parent_dir_suffix
+from incident_intelligence.rag.answer import build_grounded_context, build_template_answer
+from incident_intelligence.rag.diagnose import diagnose_rag_index
+from incident_intelligence.rag.index import RagIndexConfig, build_rag_index
+from incident_intelligence.rag.retrieve import retrieve_similar_documents
 
 
 DatasetKind = Literal["snapshot", "temporal"]
@@ -65,6 +76,7 @@ TEMPORAL_STAGE_ORDER: list[StageName] = [
 ]
 
 FINAL_RUN_STATUSES: set[str] = {"completed", "failed", "cancelled"}
+KnowledgeTaskStatus = Literal["idle", "running", "completed", "failed"]
 
 
 def _utc_now() -> str:
@@ -96,6 +108,11 @@ class PipelineRunRequest(BaseModel):
         if self.mode == "custom" and not self.stages:
             raise ValueError("Custom pipeline runs require at least one stage")
         return self
+
+
+class RagSearchRequest(BaseModel):
+    query: str
+    top_k: int = Field(default=5, ge=1, le=25)
 
 
 class PipelineStageResponse(BaseModel):
@@ -171,6 +188,17 @@ class PipelineRun:
     @property
     def artifacts_root(self) -> str:
         return str(PROJECT_ROOT / "artifacts" / "runs" / self.job_id)
+
+
+@dataclass
+class KnowledgeTask:
+    action: str
+    status: KnowledgeTaskStatus = "idle"
+    message: str = ""
+    started_at: str | None = None
+    finished_at: str | None = None
+    detail: dict[str, object] = field(default_factory=dict)
+    error: str | None = None
 
 
 class Base(DeclarativeBase):
@@ -503,6 +531,46 @@ def _dataset_paths_for_job(dataset_kind: DatasetKind, job_id: str | None = None)
             detail=f"Job '{job_id}' does not belong to dataset_kind '{dataset_kind}'",
         )
     return _run_data_paths(dataset_kind, job_id)
+
+
+def _get_job_for_knowledge_workflow(job_id: str) -> PipelineRun:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown job_id '{job_id}'")
+    return job
+
+
+def _knowledge_base_paths_for_job(job_id: str) -> dict[str, str]:
+    job = _get_job_for_knowledge_workflow(job_id)
+    data_paths = _run_data_paths(job.dataset_kind, job_id)
+    root = PROJECT_ROOT / "data" / "runs" / job_id / "knowledge_base"
+    if job.dataset_kind == "temporal":
+        input_path = data_paths["sequence"]
+    else:
+        input_path = data_paths["raw"]
+    return {
+        "job_id": job_id,
+        "dataset_kind": job.dataset_kind,
+        "input_path": input_path,
+        "output_dir": str(root),
+        "incidents_dir": str(root / "incidents"),
+        "runbooks_dir": str(root / "runbooks"),
+        "postmortems_dir": str(root / "postmortems"),
+    }
+
+
+def _rag_paths_for_job(job_id: str) -> dict[str, str]:
+    kb_paths = _knowledge_base_paths_for_job(job_id)
+    root = PROJECT_ROOT / "artifacts" / "runs" / job_id / "rag"
+    return {
+        "job_id": job_id,
+        "dataset_kind": kb_paths["dataset_kind"],
+        "input_dir": kb_paths["output_dir"],
+        "output_dir": str(root),
+        "chroma_dir": str(root / "chroma"),
+        "manifest_path": str(root / "documents_manifest.json"),
+    }
 
 
 def _dashboard_paths(dataset_kind: DatasetKind) -> dict[str, str]:
@@ -1019,6 +1087,11 @@ app.add_middleware(
 _JOBS: dict[str, PipelineRun] = _load_jobs()
 _JOBS_LOCK = threading.Lock()
 _RUN_PROCESSES: dict[str, subprocess.Popen] = {}
+_KNOWLEDGE_TASKS_LOCK = threading.Lock()
+_KNOWLEDGE_TASKS: dict[str, KnowledgeTask] = {
+    "generate": KnowledgeTask(action="generate"),
+    "index": KnowledgeTask(action="index"),
+}
 
 
 @app.get("/api/health")
@@ -1074,6 +1147,286 @@ def artifacts(dataset_kind: DatasetKind, job_id: str | None = None) -> dict[str,
                 "evaluation_summary",
             }
         },
+    }
+
+
+def _resolve_project_path(path_str: str) -> Path:
+    path = Path(path_str)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
+def _serialize_knowledge_task(task: KnowledgeTask) -> dict[str, object]:
+    return {
+        "action": task.action,
+        "status": task.status,
+        "message": task.message,
+        "started_at": task.started_at,
+        "finished_at": task.finished_at,
+        "detail": task.detail,
+        "error": task.error,
+    }
+
+
+def _get_knowledge_task(action: str) -> KnowledgeTask:
+    with _KNOWLEDGE_TASKS_LOCK:
+        return KnowledgeTask(**_serialize_knowledge_task(_KNOWLEDGE_TASKS[action]))
+
+
+def _update_knowledge_task(
+    action: str,
+    *,
+    status: KnowledgeTaskStatus,
+    message: str,
+    detail: dict[str, object] | None = None,
+    error: str | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> KnowledgeTask:
+    with _KNOWLEDGE_TASKS_LOCK:
+        task = _KNOWLEDGE_TASKS[action]
+        task.status = status
+        task.message = message
+        task.detail = detail or {}
+        task.error = error
+        task.started_at = started_at
+        task.finished_at = finished_at
+        return KnowledgeTask(**_serialize_knowledge_task(task))
+
+
+def _normalize_knowledge_result(result: dict[str, object]) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for key, value in result.items():
+        if isinstance(value, Path):
+            normalized[key] = str(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
+def _run_knowledge_task(action: str, job_id: str | None = None) -> None:
+    started_at = _utc_now()
+    action_label = "KB document generation" if action == "generate" else "RAG index build"
+    scoped_paths: dict[str, str] = {}
+    _update_knowledge_task(
+        action,
+        status="running",
+        message=f"{action_label} is running.",
+        started_at=started_at,
+        finished_at=None,
+        detail={"job_id": job_id} if job_id else {},
+        error=None,
+    )
+    try:
+        if action == "generate":
+            settings = load_config(KnowledgeBaseCLIConfig, "knowledge_base")
+            if job_id:
+                scoped_paths = _knowledge_base_paths_for_job(job_id)
+                input_path = scoped_paths["input_path"]
+                output_dir = scoped_paths["output_dir"]
+            else:
+                input_path = settings.input_path
+                output_dir = settings.output_dir
+            result = generate_knowledge_base(
+                KnowledgeBaseGeneratorConfig(
+                    input_path=input_path,
+                    output_dir=output_dir,
+                    max_postmortems=settings.max_postmortems,
+                    random_seed=settings.random_seed,
+                )
+            )
+            message = "Knowledge-base documents generated."
+        else:
+            settings = load_config(RagIndexCLIConfig, "rag_index")
+            if job_id:
+                scoped_paths = _rag_paths_for_job(job_id)
+                input_dir = scoped_paths["input_dir"]
+                output_dir = scoped_paths["output_dir"]
+            else:
+                input_dir = settings.input_dir
+                output_dir = settings.output_dir
+            result = build_rag_index(
+                RagIndexConfig(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    collection_name=settings.collection_name,
+                    model_name=settings.model_name,
+                    chunk_size=settings.chunk_size,
+                    chunk_overlap=settings.chunk_overlap,
+                )
+            )
+            message = "RAG index built successfully."
+
+        _update_knowledge_task(
+            action,
+            status="completed",
+            message=message,
+            detail={
+                **({"job_id": job_id} if job_id else {}),
+                **_normalize_knowledge_result(result),
+                **scoped_paths,
+            },
+            error=None,
+            started_at=started_at,
+            finished_at=_utc_now(),
+        )
+    except Exception as exc:
+        _update_knowledge_task(
+            action,
+            status="failed",
+            message=f"{action_label} failed.",
+            detail={},
+            error=str(exc),
+            started_at=started_at,
+            finished_at=_utc_now(),
+        )
+
+
+def _launch_knowledge_task(action: str, job_id: str | None = None) -> KnowledgeTask:
+    current = _get_knowledge_task(action)
+    if current.status == "running":
+        return current
+    thread = threading.Thread(
+        target=_run_knowledge_task,
+        args=(action, job_id),
+        daemon=True,
+        name=f"knowledge-{action}",
+    )
+    thread.start()
+    return _get_knowledge_task(action)
+
+
+@app.post("/api/knowledge-base/generate", status_code=202)
+def generate_knowledge_base_docs(job_id: str | None = None) -> dict[str, object]:
+    if job_id:
+        _get_job_for_knowledge_workflow(job_id)
+    task = _launch_knowledge_task("generate", job_id)
+    return {
+        "status": task.status,
+        "message": task.message or "Knowledge-base document generation started.",
+        "task": _serialize_knowledge_task(task),
+    }
+
+
+@app.post("/api/rag/index", status_code=202)
+def build_knowledge_base_index(job_id: str | None = None) -> dict[str, object]:
+    if job_id:
+        _get_job_for_knowledge_workflow(job_id)
+    task = _launch_knowledge_task("index", job_id)
+    return {
+        "status": task.status,
+        "message": task.message or "RAG index build started.",
+        "task": _serialize_knowledge_task(task),
+    }
+
+
+@app.get("/api/knowledge-base/status")
+def knowledge_base_status() -> dict[str, object]:
+    return {
+        "tasks": {
+            action: _serialize_knowledge_task(_get_knowledge_task(action))
+            for action in ("generate", "index")
+        }
+    }
+
+
+@app.get("/api/rag/diagnose")
+def diagnose_rag(job_id: str | None = None) -> dict[str, object]:
+    rag_cli_cfg = load_config(RagIndexCLIConfig, "rag_index")
+    if job_id:
+        scoped_paths = _rag_paths_for_job(job_id)
+        rag_cfg = RagIndexConfig(
+            input_dir=scoped_paths["input_dir"],
+            output_dir=scoped_paths["output_dir"],
+            collection_name=rag_cli_cfg.collection_name,
+            model_name=rag_cli_cfg.model_name,
+            chunk_size=rag_cli_cfg.chunk_size,
+            chunk_overlap=rag_cli_cfg.chunk_overlap,
+        )
+    else:
+        scoped_paths = {}
+        rag_cfg = RagIndexConfig(
+            input_dir=rag_cli_cfg.input_dir,
+            output_dir=rag_cli_cfg.output_dir,
+            collection_name=rag_cli_cfg.collection_name,
+            model_name=rag_cli_cfg.model_name,
+            chunk_size=rag_cli_cfg.chunk_size,
+            chunk_overlap=rag_cli_cfg.chunk_overlap,
+        )
+    diagnosis = diagnose_rag_index(rag_cfg)
+    return {
+        "index_exists": diagnosis["index_exists"],
+        "index_task": _serialize_knowledge_task(_get_knowledge_task("index")),
+        "rag": {
+            **diagnosis["rag"],
+            **({"job_id": job_id} if job_id else {}),
+            **({"knowledge_base_dir": scoped_paths["input_dir"]} if scoped_paths else {}),
+        },
+    }
+
+
+@app.post("/api/rag/search")
+def search_rag(request: RagSearchRequest, job_id: str | None = None) -> dict[str, object]:
+    cleaned_query = request.query.strip()
+    if len(cleaned_query) < 2:
+        raise HTTPException(status_code=422, detail="Query must contain at least 2 characters")
+
+    rag_cli_cfg = load_config(RagIndexCLIConfig, "rag_index")
+    rag_answer_cfg = load_config(RagAnswerCLIConfig, "rag_answer")
+    if job_id:
+        scoped_paths = _rag_paths_for_job(job_id)
+        rag_cfg = RagIndexConfig(
+            input_dir=scoped_paths["input_dir"],
+            output_dir=scoped_paths["output_dir"],
+            collection_name=rag_cli_cfg.collection_name,
+            model_name=rag_cli_cfg.model_name,
+            chunk_size=rag_cli_cfg.chunk_size,
+            chunk_overlap=rag_cli_cfg.chunk_overlap,
+        )
+    else:
+        rag_cfg = RagIndexConfig(
+            input_dir=rag_cli_cfg.input_dir,
+            output_dir=rag_cli_cfg.output_dir,
+            collection_name=rag_cli_cfg.collection_name,
+            model_name=rag_cli_cfg.model_name,
+            chunk_size=rag_cli_cfg.chunk_size,
+            chunk_overlap=rag_cli_cfg.chunk_overlap,
+        )
+    rag_root = _resolve_project_path(rag_cfg.output_dir)
+    chroma_dir = rag_root / "chroma"
+    manifest_path = rag_root / "documents_manifest.json"
+    if not chroma_dir.exists() or not manifest_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="RAG index not found. Run incident-build-rag-index first.",
+        )
+
+    try:
+        matches = retrieve_similar_documents(
+            cleaned_query,
+            rag_cfg,
+            n_results=max(1, min(request.top_k, 10)),
+        )
+    except Exception as exc:  # pragma: no cover - defensive path for local index state
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to query the RAG index: {exc}",
+        ) from exc
+
+    return {
+        "query": cleaned_query,
+        "n_results": len(matches),
+        "collection_name": rag_cfg.collection_name,
+        "model_name": rag_cfg.model_name,
+        "matches": matches,
+        "answer": build_template_answer(
+            cleaned_query,
+            matches,
+            max_evidence=rag_answer_cfg.max_evidence,
+            mode=rag_answer_cfg.mode,
+        ),
+        "grounded_context": build_grounded_context(matches),
     }
 
 

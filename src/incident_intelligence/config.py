@@ -22,6 +22,10 @@ The configuration sections currently defined are:
     - evaluate: For model evaluation settings.
     - explain: For model explainability settings.
     - explain_local: For local explainability settings on specific examples.
+    - knowledge_base: For synthetic knowledge-base document generation.
+    - rag_index: For vector index generation over knowledge-base documents.
+    - rag_answer: For deterministic or future LLM-backed answer synthesis over retrieved chunks.
+    - rag_evaluate: For scoring retrieval quality over incident knowledge-base documents.
 """
 
 from __future__ import annotations
@@ -247,6 +251,36 @@ class ExplainLocalCLIConfig:
     model: str = "artifacts/models/best_model.joblib"
 
 
+@dataclass
+class KnowledgeBaseCLIConfig:
+    input_path: str = "data/raw/incidents_sequence_raw.csv"
+    output_dir: str = "data/knowledge_base/generated"
+    max_postmortems: int = 6
+    random_seed: int = 42
+
+
+@dataclass
+class RagIndexCLIConfig:
+    input_dir: str = "data/knowledge_base"
+    output_dir: str = "artifacts/rag"
+    collection_name: str = "incident_knowledge_base"
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    chunk_size: int = 900
+    chunk_overlap: int = 120
+
+
+@dataclass
+class RagAnswerCLIConfig:
+    mode: str = "template"
+    max_evidence: int = 3
+
+
+@dataclass
+class RagEvaluateCLIConfig:
+    top_k: int = 5
+    max_incidents: int = 100
+
+
 """
 Registry of config sections to their corresponding dataclass types for easy loading in CLI scripts.
 This mapping allows CLI scripts to load the appropriate configuration section from pyproject.toml into a 
@@ -260,6 +294,10 @@ CONFIG_SECTIONS: dict[str, type] = {
     "evaluate": EvaluateCLIConfig,
     "explain": ExplainCLIConfig,
     "explain_local": ExplainLocalCLIConfig,
+    "knowledge_base": KnowledgeBaseCLIConfig,
+    "rag_index": RagIndexCLIConfig,
+    "rag_answer": RagAnswerCLIConfig,
+    "rag_evaluate": RagEvaluateCLIConfig,
 }
 
 
