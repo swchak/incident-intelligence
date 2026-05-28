@@ -232,6 +232,26 @@ The generated structure includes:
 - `runbooks/`: one runbook per observed root-cause label
 - `postmortems/`: one postmortem per selected incident
 
+There are now two ways to use the knowledge-base workflow:
+
+- CLI-first, using the default shared paths from [pyproject.toml](/Users/swethachakravarthy/Projects/incident-intelligence/pyproject.toml)
+- dashboard-driven, using the currently selected run's run-scoped data and artifact directories
+
+When launched from the dashboard, KB generation no longer assumes a shared
+`data/raw/incidents_sequence_raw.csv`. Instead, it uses the selected run:
+
+- snapshot run -> `data/runs/<job_id>/raw/incidents_raw.csv`
+- temporal run -> `data/runs/<job_id>/raw/incidents_sequence_raw.csv`
+
+and writes generated KB docs under:
+
+```text
+data/runs/<job_id>/knowledge_base/
+  incidents/
+  runbooks/
+  postmortems/
+```
+
 ## Vector Index For Retrieval
 
 The repository now includes a first-pass retrieval layer under:
@@ -265,6 +285,21 @@ By default, this writes artifacts under:
 artifacts/rag/
   chroma/
   documents_manifest.json
+```
+
+For dashboard-driven workflows, the vector index is now also run-scoped. When a
+job is selected in the UI, index build, search, and diagnostics operate against:
+
+```text
+artifacts/runs/<job_id>/rag/
+  chroma/
+  documents_manifest.json
+```
+
+with the corresponding KB input rooted at:
+
+```text
+data/runs/<job_id>/knowledge_base/
 ```
 
 After the index is built, you can run a simple retrieval query with:
@@ -309,6 +344,11 @@ The dashboard/API also exposes RAG endpoints for app-driven workflows:
 - `POST /api/rag/search`
 - `GET /api/rag/diagnose`
 
+These endpoints now support run-aware workflows from the dashboard. The UI calls
+them with the selected run's `job_id`, so RAG operations stay aligned to the
+same run-scoped datasets, generated KB docs, and artifacts the user is already
+inspecting.
+
 The first answer layer is intentionally LLM-optional. `POST /api/rag/search` now returns:
 
 - raw retrieval matches
@@ -320,6 +360,81 @@ The first answer layer is intentionally LLM-optional. `POST /api/rag/search` now
   - suggested next steps
 
 This keeps the initial RAG workflow reproducible and testable without requiring external model-provider API keys.
+
+## RAG Quickstart
+
+### CLI Flow
+
+If you want to try the retrieval workflow directly from the terminal, the
+fastest sequence is:
+
+1. Generate temporal sequence data:
+
+```bash
+incident-generate-sequence
+```
+
+2. Generate synthetic KB docs from that sequence data:
+
+```bash
+incident-generate-knowledge-base
+```
+
+3. Build the local vector index:
+
+```bash
+incident-build-rag-index
+```
+
+4. Query the index:
+
+```bash
+incident-query-rag "memory leak symptoms and OOM logs"
+```
+
+5. Inspect index health:
+
+```bash
+incident-rag-diagnose
+```
+
+6. Evaluate deterministic retrieval quality:
+
+```bash
+incident-evaluate-rag
+```
+
+Equivalent Make targets are:
+
+```bash
+make generate-sequence
+make knowledge-base
+make rag-index
+make rag-query RAG_QUERY="memory leak symptoms and OOM logs"
+make rag-diagnose
+make evaluate-rag
+```
+
+### Dashboard Flow
+
+If you use the dashboard instead of the CLI:
+
+1. Select a run in `Recent Jobs`
+2. Open the `Knowledge Base` section
+3. Click `Generate KB Docs`
+4. Click `Build RAG Index`
+5. Use `Search Knowledge Base`
+
+In the dashboard, KB docs and the RAG index are run-scoped. That means the
+selected run determines:
+
+- which raw/generated dataset is used as KB input
+- where KB markdown files are written
+- which Chroma index is searched
+- which diagnostics are shown in the UI
+
+This keeps the retrieval workflow aligned with the exact run whose pipeline
+artifacts, logs, and results you are already inspecting.
 
 ## Dashboard App
 
@@ -338,6 +453,9 @@ The dashboard is intended to demonstrate the ML pipeline end to end rather than 
 - persisting pipeline run history in SQLite across backend restarts
 - deleting completed and failed pipeline runs from the UI
 - surfacing evaluation and explainability visuals like confusion matrices, feature-importance charts, and SHAP outputs directly in the UI
+- generating run-scoped knowledge-base documents from the selected run
+- building a run-scoped RAG index for the selected run
+- searching that run's KB with deterministic, LLM-optional answers and diagnostics
 
 Dashboard run metadata is currently persisted at:
 
@@ -349,6 +467,14 @@ Associated job logs are stored under:
 
 ```text
 artifacts/api_runs/
+```
+
+Knowledge-base and RAG outputs created through the dashboard are now tied to
+the selected run rather than shared globally:
+
+```text
+data/runs/<job_id>/knowledge_base/
+artifacts/runs/<job_id>/rag/
 ```
 
 ## CI And Deployment
